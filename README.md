@@ -1,5 +1,9 @@
 # Solar System Sandbox
 
+[![Live Demo](https://img.shields.io/badge/Live-Demo-2ea44f)](https://mrgreenish.github.io/solar-system-simulator/)
+
+Live demo: https://mrgreenish.github.io/solar-system-simulator/
+
 Single-file HTML5 solar system sandbox simulation. Paint matter (gas/rock/ice), watch gravity form stars and planets, and play with orbits — no build, no deps. Just open `index.html`.
 
 ## Features
