@@ -437,6 +437,43 @@ Planning Checklist
       function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
       function getTimeScale() { return CONFIG.timeScale * CONFIG.speedBoost; }
 
+      // ===== Visual helpers (colors, RNG) =====
+      // Purpose: Provide small utilities for procedural shading without external deps.
+      function shade(rgb, amt) {
+        // Brightness shift: amt in [-1,1]
+        return {
+          r: clamp(Math.round(rgb.r + amt * 255), 0, 255),
+          g: clamp(Math.round(rgb.g + amt * 255), 0, 255),
+          b: clamp(Math.round(rgb.b + amt * 255), 0, 255)
+        };
+      }
+      function lerpColor(a,b,t){ return { r:Math.round(a.r+(b.r-a.r)*t), g:Math.round(a.g+(b.g-a.g)*t), b:Math.round(a.b+(b.b-a.b)*t) }; }
+      function rgbStr(c){ return `rgb(${c.r},${c.g},${c.b})`; }
+      function seededRng(seed){
+        // Simple LCG for deterministic per-body decoration
+        let s = (seed >>> 0) || 1; return () => { s = (1664525*s + 1013904223) >>> 0; return (s & 0xffffff)/0x1000000; };
+      }
+
+      // Dominant composition and palette selection
+      function dominantComp(comp){
+        if (comp.gas >= comp.rock && comp.gas >= comp.ice) return 'gas';
+        if (comp.ice >= comp.gas && comp.ice >= comp.rock) return 'ice';
+        return 'rock';
+      }
+      function planetPalette(body){
+        const dom = dominantComp(body.comp);
+        if (dom === 'gas') return { base:{r:202,g:190,b:160}, light:{r:230,g:220,b:190}, dark:{r:150,g:140,b:120}, atm:{r:170,g:200,b:255} };
+        if (dom === 'ice') return { base:{r:185,g:220,b:240}, light:{r:235,g:250,b:255}, dark:{r:120,g:150,b:170}, atm:{r:190,g:235,b:255} };
+        return { base:{r:176,g:146,b:120}, light:{r:220,g:200,b:180}, dark:{r:110,g:95,b:85}, atm:{r:230,g:210,b:190} };
+      }
+      function nearestStarTo(body){
+        let best=null, d2Min=Infinity;
+        for (const b of State.bodies) if (b.type==='star'){
+          const dx=b.x-body.x, dy=b.y-body.y; const d2=dx*dx+dy*dy; if (d2<d2Min){ d2Min=d2; best=b; }
+        }
+        return best;
+      }
+
       // ===============================
       // Input & Interaction
       // ===============================
@@ -689,33 +726,209 @@ Planning Checklist
         for (const b of State.bodies) {
           const x = b.x + b.vx * step * alpha;
           const y = b.y + b.vy * step * alpha;
-          const r=Math.max(1, b.radius);
-          // Rings for giants
-          if (b.type==='planet' && (b.comp.gas>=0.55 || b.comp.ice>=0.55) && r>6) {
-            ctx.save(); ctx.globalAlpha=0.35; ctx.strokeStyle = b.comp.gas>=0.55 ? '#a0c8ff' : '#c9f0ff';
-            ctx.lineWidth = Math.max(1, r*0.2);
-            ctx.beginPath(); ctx.ellipse(x, y, r*1.8, r*0.8, 0.6, 0, Math.PI*2); ctx.stroke(); ctx.restore();
-          }
-
-          // Glow for stars
-          if (b.type==='star') {
-            const col = starColor(b.mass); const glow = Math.min(80, r*3.5);
-            const g = ctx.createRadialGradient(x, y, Math.max(2, r*0.5), x, y, glow);
-            g.addColorStop(0, withAlpha(col, 0.9));
-            g.addColorStop(0.5, withAlpha(col, 0.35));
-            g.addColorStop(1, withAlpha(col, 0.02));
-            ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, glow, 0, Math.PI*2); ctx.fill();
-          }
-
-          // Main disk
-          const col = bodyColor(b);
-          const grad = ctx.createRadialGradient(x - r*0.35, y - r*0.35, r*0.1, x, y, r);
-          grad.addColorStop(0, '#ffffff');
-          grad.addColorStop(0.25, `rgb(${col.r},${col.g},${col.b})`);
-          grad.addColorStop(1, 'rgba(255,255,255,0.06)');
-          ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
-          ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(0,0,0,0.2)'; ctx.stroke();
+          const r = Math.max(1, b.radius);
+          if (b.type === 'star') drawStarRealistic(ctx, b, x, y, r);
+          else drawPlanetRealistic(ctx, b, x, y, r);
         }
+      }
+      // Draw a physically-inspired star: limb-darkened disk + soft corona.
+      function drawStarRealistic(ctx, b, x, y, r){
+        const col = starColor(b.mass);
+        // Limb darkening: bright center -> dim edge
+        const photosphere = ctx.createRadialGradient(x, y, 0, x, y, r);
+        photosphere.addColorStop(0.0, withAlpha(col, 1.0));
+        photosphere.addColorStop(0.6, withAlpha(col, 0.9));
+        photosphere.addColorStop(1.0, withAlpha(col, 0.6));
+        ctx.fillStyle = photosphere; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+        // Corona
+        const glowR = Math.min(160, r*4.0);
+        const corona = ctx.createRadialGradient(x, y, r*0.8, x, y, glowR);
+        corona.addColorStop(0.0, withAlpha(col, 0.35));
+        corona.addColorStop(1.0, 'rgba(255,255,255,0.01)');
+        ctx.fillStyle = corona; ctx.beginPath(); ctx.arc(x, y, glowR, 0, Math.PI*2); ctx.fill();
+      }
+
+      // Draw planets with light from nearest star: day-night shading, subtle details, rings + shadows.
+      function drawPlanetRealistic(ctx, b, x, y, r){
+        const star = nearestStarTo(b);
+        const palette = planetPalette(b);
+        // No star: simple disk
+        if (!star){
+          const g = ctx.createRadialGradient(x - r*0.4, y - r*0.4, r*0.2, x, y, r);
+          g.addColorStop(0, rgbStr(palette.light)); g.addColorStop(1, rgbStr(palette.dark));
+          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+          return;
+        }
+        // Light direction from star to planet
+        let lx = star.x - b.x, ly = star.y - b.y; const l = Math.hypot(lx, ly) || 1; lx/=l; ly/=l;
+        // Create a linear gradient along light vector across the disk
+        const gx = x - lx*r, gy = y - ly*r, hx = x + lx*r, hy = y + ly*r;
+        const grad = ctx.createLinearGradient(gx, gy, hx, hy);
+        grad.addColorStop(0.0, 'rgba(0,0,0,0.85)');               // deep night
+        grad.addColorStop(0.35, rgbStr(palette.dark));            // terminator
+        grad.addColorStop(0.65, rgbStr(palette.base));            // day
+        grad.addColorStop(1.0, rgbStr(palette.light));            // bright limb
+        ctx.save();
+        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.clip();
+        // Fill disk with lighting gradient
+        ctx.fillStyle = grad; ctx.fillRect(x-r-2, y-r-2, (r*2)+4, (r*2)+4);
+
+        // Subtle composition-driven detail
+        if (r > 6) {
+          const dom = dominantComp(b.comp);
+          if (dom==='gas') paintGasBands(ctx, x, y, r, palette, b.id);
+          else if (dom==='ice') paintIcyHighlights(ctx, x, y, r, palette, lx, ly, b.id);
+          else paintRockAlbedo(ctx, x, y, r, palette, b.id);
+        }
+
+        // Rings if giant composition
+        if ((b.comp.gas>=0.55 || b.comp.ice>=0.55) && r>6) {
+          drawRingsRealistic(ctx, x, y, r, lx, ly);
+        }
+        ctx.restore();
+
+        // Atmospheric rim scattering (opposite star)
+        if (r > 4) {
+          const rimCol = palette.atm; const rimAlpha = (b.comp.gas>=0.3 || b.comp.ice>=0.3) ? 0.25 : 0.12;
+          ctx.save(); ctx.globalAlpha = rimAlpha; ctx.strokeStyle = rgbStr(rimCol); ctx.lineWidth = Math.max(1, r*0.08);
+          // Rim more intense on far limb: offset center slightly toward star
+          ctx.beginPath(); ctx.arc(x - lx*r*0.15, y - ly*r*0.15, r + ctx.lineWidth*0.4, 0, Math.PI*2); ctx.stroke(); ctx.restore();
+        }
+      }
+
+      // Subtle banding for gas giants using semi-transparent latitudinal sweeps.
+      function paintGasBands(ctx, x, y, r, palette, seed){
+        const rng = seededRng(seed);
+        const bands = Math.round(8 + Math.min(18, r*0.4));
+        ctx.globalAlpha = 0.22;
+        for (let i=0;i<bands;i++){
+          const t = (i + 0.5)/bands; const latR = r * Math.cos((t-0.5)*Math.PI);
+          const c = lerpColor(palette.dark, palette.light, 0.4 + 0.2*(rng()-0.5));
+          ctx.strokeStyle = rgbStr(c);
+          ctx.lineWidth = Math.max(1, r * (0.03 + rng()*0.02));
+          ctx.beginPath(); ctx.ellipse(x, y, r*0.98, Math.abs(latR)*0.45, 0, 0, Math.PI*2); ctx.stroke();
+        }
+        ctx.globalAlpha = 1.0;
+      }
+
+      // Low-contrast blotchy albedo for rocky planets
+      function paintRockAlbedo(ctx, x, y, r, palette, seed){
+        const rng = seededRng(seed ^ 0xA53);
+        const blotches = Math.round(10 + Math.min(24, r*0.8));
+        for (let i=0;i<blotches;i++){
+          const a = rng()*Math.PI*2, rr = r*(0.1 + rng()*0.8), br = r*(0.05 + rng()*0.08);
+          const cx = x + Math.cos(a)*rr*0.6, cy = y + Math.sin(a)*rr*0.6;
+          const col = lerpColor(palette.dark, palette.base, 0.3 + rng()*0.4);
+          const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, br);
+          g.addColorStop(0, rgbStr(col)); g.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.globalAlpha = 0.18; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, br, 0, Math.PI*2); ctx.fill();
+        }
+        ctx.globalAlpha = 1.0;
+      }
+
+      // Specular highlights and faint streaks for icy worlds
+      function paintIcyHighlights(ctx, x, y, r, palette, lx, ly, seed){
+        // Specular near reflection direction (approx on dayside near limb)
+        const hx = x + lx * r*0.4, hy = y + ly * r*0.4;
+        const g = ctx.createRadialGradient(hx, hy, 0, hx, hy, r*0.7);
+        g.addColorStop(0, 'rgba(255,255,255,0.9)'); g.addColorStop(0.3, rgbStr(palette.light)); g.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.globalAlpha = 0.25; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill(); ctx.globalAlpha = 1.0;
+      }
+
+      // More realistic rings with inner/outer bands and planet shadow on rings
+      function drawRingsRealistic(ctx, x, y, r, lx, ly){
+        const tilt = 0.35; const outer = r*2.2, inner = r*1.3;
+        ctx.save();
+        // Draw rings (two bands)
+        ctx.globalAlpha = 0.22; ctx.strokeStyle = '#e6dcc4'; ctx.lineWidth = Math.max(1, r*0.15);
+        ctx.beginPath(); ctx.ellipse(x, y, outer, outer*0.55, tilt, 0, Math.PI*2); ctx.stroke();
+        ctx.globalAlpha = 0.32; ctx.lineWidth = Math.max(1, r*0.28);
+        ctx.beginPath(); ctx.ellipse(x, y, (inner+outer)/2, (inner+outer)/2*0.55, tilt, 0, Math.PI*2); ctx.stroke();
+
+        // Planet shadow on rings: draw a dark ellipse segment behind planet along light direction
+        ctx.globalCompositeOperation = 'multiply';
+        ctx.globalAlpha = 0.25; ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        const sx = x - lx * r*0.3, sy = y - ly * r*0.3; // shadow center slightly behind planet
+        ctx.beginPath(); ctx.ellipse(sx, sy, r*1.2, r*0.6, tilt, 0, Math.PI*2); ctx.fill();
+        ctx.restore();
+      }
+
+      // Gas giants: latitudinal bands and a subtle storm.
+      function drawGasBands(ctx, x, y, r, base, seed) {
+        const rng = seededRng(seed);
+        const bands = Math.round(6 + Math.min(18, r*0.6));
+        for (let i=0;i<bands;i++) {
+          const t = (i + 0.5)/bands; // -1..1 latitude
+          const lat = Math.cos((t-0.5)*Math.PI)*r;
+          const thickness = Math.max(1, r * (0.04 + rng()*0.03));
+          const shift = (rng()-0.5)*0.3;
+          const c1 = shade(base, (rng()-0.5)*0.15);
+          ctx.strokeStyle = rgbStr(c1);
+          ctx.globalAlpha = 0.35;
+          ctx.lineWidth = thickness;
+          ctx.beginPath();
+          ctx.ellipse(x + r*0.05*shift, y, Math.max(0.1, r*0.98), lat*0.35, 0, 0, Math.PI*2);
+          ctx.stroke();
+        }
+        // Great storm spot
+        ctx.globalAlpha = 0.18; ctx.fillStyle = rgbStr(shade(base, -0.15));
+        ctx.beginPath(); ctx.ellipse(x + r*0.35, y - r*0.1, r*0.35, r*0.22, 0.35, 0, Math.PI*2); ctx.fill();
+        ctx.globalAlpha = 1.0;
+      }
+
+      // Rocky: a few soft craters (darker rims) for texture.
+      function drawRockCraters(ctx, x, y, r, base, seed) {
+        const rng = seededRng(seed ^ 0x9e3779b9);
+        const count = Math.round(3 + Math.min(12, r*0.5));
+        for (let i=0;i<count;i++) {
+          const a = rng()*Math.PI*2; const rr = r*(0.2 + rng()*0.6);
+          const cr = Math.max(0.6, r*(0.05 + rng()*0.06));
+          const cx = x + Math.cos(a)*rr*0.6; const cy = y + Math.sin(a)*rr*0.6;
+          const edge = shade(base, -0.18 - rng()*0.12);
+          const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, cr);
+          g.addColorStop(0, 'rgba(0,0,0,0.15)');
+          g.addColorStop(0.6, rgbStr(shade(base, -0.05)));
+          g.addColorStop(1, rgbStr(edge));
+          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, cr, 0, Math.PI*2); ctx.fill();
+        }
+      }
+
+      // Icy: bright highlights and faint streaks.
+      function drawIceSpecular(ctx, x, y, r, base, seed) {
+        // Specular highlight
+        const hlR = r*0.6; const hx = x - r*0.35, hy = y - r*0.35;
+        const g1 = ctx.createRadialGradient(hx, hy, 0, hx, hy, hlR);
+        g1.addColorStop(0, 'rgba(255,255,255,0.9)');
+        g1.addColorStop(0.4, rgbStr(base));
+        g1.addColorStop(1, 'rgba(255,255,255,0.06)');
+        ctx.fillStyle = g1; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+
+        // Streaks
+        const rng = seededRng(seed*2654435761);
+        const lines = Math.round(4 + Math.min(14, r*0.4));
+        ctx.save(); ctx.globalAlpha = 0.25; ctx.strokeStyle = 'rgba(240,255,255,0.7)'; ctx.lineWidth = Math.max(1, r*0.03);
+        for (let i=0;i<lines;i++) {
+          const ang = rng()*Math.PI*2; const len = r*(0.3 + rng()*0.6);
+          const px = x + Math.cos(ang)*r*0.2; const py = y + Math.sin(ang)*r*0.2;
+          ctx.beginPath(); ctx.moveTo(px - Math.cos(ang)*len*0.5, py - Math.sin(ang)*len*0.5);
+          ctx.lineTo(px + Math.cos(ang)*len*0.5, py + Math.sin(ang)*len*0.5);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      // Rings: multi-pass with inner gap and opacity gradient.
+      function drawRings(ctx, x, y, r, color) {
+        ctx.save();
+        const tilt = 0.35; // radians
+        const outer = r*2.2, inner = r*1.3;
+        // Outer faint ring
+        ctx.globalAlpha = 0.18; ctx.strokeStyle = color; ctx.lineWidth = Math.max(1, r*0.15);
+        ctx.beginPath(); ctx.ellipse(x, y, outer, outer*0.55, tilt, 0, Math.PI*2); ctx.stroke();
+        // Main ring band with gap
+        ctx.globalAlpha = 0.35; ctx.lineWidth = Math.max(1, r*0.28);
+        ctx.beginPath(); ctx.ellipse(x, y, (inner+outer)/2, (inner+outer)/2*0.55, tilt, 0, Math.PI*2); ctx.stroke();
+        ctx.restore();
       }
 
       function drawVectors(ctx) {
