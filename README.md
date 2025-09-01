@@ -29,10 +29,11 @@ Single-file HTML5 solar system sandbox simulation. Paint matter (gas/rock/ice), 
 - Preset System: Stable system with 5–8 planets, occasional moons, debris belt
 
 ## Run Locally
-- 2D: open `index.html` (start screen) or `2d` option.
-- 3D (Three.js): requires build or dev server.
-  - Dev: `npm install` then `npm run dev` and open the served URL.
-  - Build: `npm run build` then open files in `dist/`.
+- 2D: open `index.html` directly, or use the landing page after serving.
+- 3D (Three.js):
+  - Quick preview (build + serve): `npm install` then `npm run dev` → open printed URL (e.g., http://localhost:4173)
+  - Live dev server: `npm run dev:live` (hot reload) → open the URL (e.g., http://localhost:5173)
+  - Manual: `npm run build` then `npm run preview`
 
 ## GitHub Pages (CI)
 - This repo includes a GitHub Actions workflow to publish the static site.
