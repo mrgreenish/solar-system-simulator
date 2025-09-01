@@ -29,11 +29,14 @@ Single-file HTML5 solar system sandbox simulation. Paint matter (gas/rock/ice), 
 - Preset System: Stable system with 5–8 planets, occasional moons, debris belt
 
 ## Run Locally
-- Open `index.html` in any modern browser.
+- 2D: open `index.html` (start screen) or `2d` option.
+- 3D (Three.js): requires build or dev server.
+  - Dev: `npm install` then `npm run dev` and open the served URL.
+  - Build: `npm run build` then open files in `dist/`.
 
 ## GitHub Pages (CI)
 - This repo includes a GitHub Actions workflow to publish the static site.
-- On push to `main`, the workflow uploads `index.html` and deploys to Pages.
+- On push to `main`, the workflow builds the Three.js app and deploys `dist/` to Pages (includes 2D + 3D).
 - First-time publish may take ~1–2 minutes.
 
 If Pages isn’t enabled, in GitHub: Settings → Pages → Build and deployment → Source: “GitHub Actions”.

@@ -1295,7 +1295,38 @@ Planning Checklist
       initCanvas(); bindUI(); initInput(); drawBackground(State.ctx); drawHUD();
       // Initialize accelerations once for proper first half-kick
       computeAccelerations(State.bodies);
-      requestAnimationFrame(frame);
-    </script>
-  </body>
+  requestAnimationFrame(frame);
+  </script>
+  <!-- Start Screen Overlay (inline styles for minimal patch) -->
+  <div id="start" style="position:fixed;inset:0;background:radial-gradient(ellipse at top, rgba(8,12,20,0.96), rgba(5,7,12,0.98));display:flex;align-items:center;justify-content:center;z-index:9999;">
+    <div style="background:rgba(12,16,26,0.6);border:1px solid #222842;border-radius:12px;padding:18px;width:520px;max-width:92vw;box-shadow:0 10px 40px rgba(0,0,0,0.5);">
+      <h2 style="margin:0 0 8px;font-size:18px;">Solar System Sandbox</h2>
+      <p style="margin:6px 0 14px;color:#9aa4b2;font-size:13px;">Pick a version: Canvas 2D simulator or Three.js 3D. Your saved state is shared.</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div id="start-2d" style="border:1px solid #222842;border-radius:10px;padding:12px;background:#0b1220;cursor:pointer;">
+          <div style="font-weight:600;margin-bottom:4px;">2D — Canvas</div>
+          <div style="font-size:12px;color:#9aa4b2;">Paint matter, gravity sandbox, trails and vectors. Fast and interactive.</div>
+        </div>
+        <div id="start-3d" style="border:1px solid #222842;border-radius:10px;padding:12px;background:#0b1220;cursor:pointer;">
+          <div style="font-weight:600;margin-bottom:4px;">3D — Three.js</div>
+          <div style="font-size:12px;color:#9aa4b2;">Same N‑body motion, rendered as spheres with star glow. Experimental.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+  (function(){
+    try{
+      // Pause until user picks version
+      if (window.State) { State.paused = true; }
+      var start = document.getElementById('start');
+      var b2d = document.getElementById('start-2d');
+      var b3d = document.getElementById('start-3d');
+      if (b2d) b2d.addEventListener('click', function(){ if (window.State) { State.paused = false; }
+        var tp=document.getElementById('togglePause'); if (tp) tp.textContent='Pause'; start.style.display='none'; });
+      if (b3d) b3d.addEventListener('click', function(){ window.location.href = './3d.html'; });
+    }catch(e){}
+  })();
+  </script>
+</body>
 </html>
