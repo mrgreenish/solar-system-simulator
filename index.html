@@ -27,40 +27,139 @@ Planning Checklist
       --danger: #ff6b6b;
       --outline: #222842;
       --sidebar-w: 320px;
+      /* 80s pixel theme accents */
+      --crt-grid-1: #101935;
+      --crt-grid-2: #0b1430;
+      --crt-border: #2b3a84;
+      --crt-neon: #6af2ff;
+      --crt-neon-2: #ff6ad5;
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans", sans-serif; }
     #app { display: grid; grid-template-columns: var(--sidebar-w) 1fr; height: 100vh; width: 100vw; overflow: hidden; }
-    aside { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border-right: 1px solid var(--outline); padding: 14px; overflow-y: auto; }
-    h1 { font-size: 16px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
-    .brand-dot { width: 8px; height: 8px; border-radius: 50%; background: radial-gradient(circle at 30% 30%, #fff, var(--accent)); box-shadow: 0 0 10px var(--accent); }
+    /* --- 80s Pixel Panel --- */
+    aside {
+      position: relative;
+      padding: 14px;
+      overflow-y: auto;
+      /* Keep layout stable when scrollbar appears */
+      scrollbar-gutter: stable both-edges;
+      background:
+        repeating-linear-gradient(
+          to bottom,
+          var(--crt-grid-1) 0px,
+          var(--crt-grid-1) 3px,
+          var(--crt-grid-2) 3px,
+          var(--crt-grid-2) 6px
+        );
+      border-right: 0;
+      box-shadow:
+        inset 0 0 0 2px var(--crt-border), /* chunky inner border */
+        inset 0 0 0 4px #0a0f2a,           /* bezel */
+        0 0 0 1px #000,                   /* outer hairline */
+        0 0 24px rgba(106, 242, 255, 0.08); /* glow */
+      image-rendering: pixelated;
+      -webkit-font-smoothing: none; /* make text a bit more aliased */
+      font-family: "Lucida Console", "Monaco", "Courier New", monospace;
+      letter-spacing: 0.3px;
+    }
+    /* Pixel-styled scrollbars */
+    aside { scrollbar-width: thin; scrollbar-color: var(--crt-neon) transparent; }
+    aside::-webkit-scrollbar { width: 8px; height: 8px; }
+    aside::-webkit-scrollbar-track { background: transparent; }
+    aside::-webkit-scrollbar-thumb {
+      background: linear-gradient(180deg, rgba(106,242,255,0.85), rgba(255,106,213,0.85));
+      box-shadow: inset 0 0 0 2px #0a0f2a, 0 0 10px rgba(106,242,255,0.25);
+    }
+    aside::-webkit-scrollbar-corner { background: transparent; }
+    /* subtle scanline sweep */
+    aside::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(
+        to bottom,
+        transparent 0%,
+        rgba(255,255,255,0.04) 48%,
+        transparent 100%
+      );
+      mix-blend-mode: soft-light;
+      pointer-events: none;
+      animation: crtSweep 5s linear infinite;
+      opacity: 0.35;
+    }
+    @keyframes crtSweep {
+      0% { transform: translateY(-100%); }
+      100% { transform: translateY(100%); }
+    }
+
+    h1 { font-size: 14px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent-2); text-shadow: 1px 1px 0 #000, 0 0 6px rgba(255, 209, 102, 0.35); }
+    .brand-dot { width: 8px; height: 8px; background: var(--crt-neon); box-shadow: 0 0 6px var(--crt-neon), 0 0 12px rgba(106,242,255,0.6); }
     section { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px dashed var(--outline); }
     section:last-child { border-bottom: none; }
     .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 6px 0; }
-    .row label { font-size: 12px; color: var(--muted); flex: 1; }
-    .row .value { font-variant-numeric: tabular-nums; color: var(--accent-2); min-width: 56px; text-align: right; font-size: 12px; }
+    .row label { font-size: 11px; color: var(--muted); flex: 1; text-transform: uppercase; letter-spacing: 0.5px; }
+    .row .value { font-variant-numeric: tabular-nums; color: var(--crt-neon); min-width: 56px; text-align: right; font-size: 11px; text-shadow: 0 0 6px rgba(106,242,255,0.4); }
     .radio-group { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
     .radio-group input { display: none; }
-    .radio-group label { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px; border: 1px solid var(--outline); border-radius: 6px; background: #0d1020; cursor: pointer; font-size: 12px; }
-    .radio-group input:checked + label { outline: 2px solid var(--accent); background: #0e1a35; box-shadow: 0 0 0 2px rgba(106,176,255,0.15) inset; }
-    input[type="range"], select, button { width: 100%; accent-color: var(--accent); }
-    select, button, input[type="number"], input[type="text"] { background: #0d1020; color: var(--text); border: 1px solid var(--outline); border-radius: 6px; padding: 6px 8px; font-size: 12px; }
-    button { cursor: pointer; }
+    .radio-group label {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      padding: 6px 4px; cursor: pointer; font-size: 11px; text-transform: uppercase;
+      background: #0d1020; color: var(--text);
+      border: 0; border-radius: 0; box-shadow:
+        inset 0 0 0 2px var(--crt-border),
+        inset 0 0 0 4px #0a0f2a,
+        0 0 0 1px #000;
+    }
+    .radio-group input:checked + label {
+      background: #0e1a35;
+      box-shadow:
+        inset 0 0 0 2px var(--crt-neon),
+        inset 0 0 0 4px #0a0f2a,
+        0 0 12px rgba(106, 242, 255, 0.35);
+      color: var(--crt-neon);
+      text-shadow: 0 0 6px rgba(106,242,255,0.5);
+    }
+    input[type="range"], select, button { width: 100%; accent-color: var(--crt-neon); }
+    select, button, input[type="number"], input[type="text"] {
+      background: #0d1020; color: var(--text);
+      border: 0; border-radius: 0; padding: 6px 8px; font-size: 11px;
+      box-shadow: inset 0 0 0 2px var(--crt-border), inset 0 0 0 4px #0a0f2a, 0 0 0 1px #000;
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    button { cursor: pointer; color: var(--crt-neon); text-shadow: 0 0 6px rgba(106,242,255,0.45); }
+    /* --- Tooltip (pixel/CRT style) --- */
+    .has-tip { position: relative; cursor: help; }
+    .has-tip::before {
+      content: "?";
+      display: inline-block; margin-left: 6px; width: 14px; height: 14px; line-height: 14px; text-align: center;
+      font-size: 10px; color: var(--crt-neon); background: #0d1020; vertical-align: middle; transform: translateY(-1px);
+      box-shadow: inset 0 0 0 2px var(--crt-border), inset 0 0 0 4px #0a0f2a, 0 0 0 1px #000;
+    }
+    .has-tip::after {
+      content: attr(data-tip);
+      position: absolute; left: 0; top: 100%; transform: translateY(6px);
+      background: rgba(20,22,35,0.95); color: #e9f1ff; padding: 6px 8px; font-size: 10px;
+      text-transform: none; letter-spacing: 0.2px; max-width: 260px; white-space: normal; z-index: 3;
+      box-shadow: inset 0 0 0 2px var(--crt-border), inset 0 0 0 4px #0a0f2a, 0 0 12px rgba(106,242,255,0.2);
+      display: none;
+    }
+    .has-tip:hover::after, .has-tip:focus-visible::after { display: block; }
     .btn-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
     .btn-row-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
     .warn { border-color: #633; color: #ffdede; }
-    .small { font-size: 11px; color: var(--muted); }
+    .small { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; }
     .legend { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
-    .gas { background: radial-gradient(circle at 30% 30%, #fff, #6ab0ff); }
-    .rock { background: radial-gradient(circle at 30% 30%, #ffe, #caa36d); }
-    .ice { background: radial-gradient(circle at 30% 30%, #fff, #9fefff); }
-    .eraser { background: linear-gradient(135deg, #333, #000); border: 1px solid #555; }
+    .dot { width: 10px; height: 10px; display: inline-block; border-radius: 0; box-shadow: 0 0 8px rgba(255,255,255,0.15); }
+    .gas { background: #6ab0ff; box-shadow: 0 0 8px rgba(106,176,255,0.6); }
+    .rock { background: #caa36d; box-shadow: 0 0 8px rgba(202,163,109,0.5); }
+    .ice { background: #9fefff; box-shadow: 0 0 8px rgba(159,239,255,0.6); }
+    .eraser { background: #151515; box-shadow: inset 0 0 0 2px #555; }
     canvas { display: block; width: 100%; height: 100%; background: #05060a; }
     #hud { position: absolute; top: 8px; right: 8px; background: rgba(10,12,20,0.5); border: 1px solid var(--outline); border-radius: 8px; padding: 6px 8px; font-size: 12px; color: #d6dee9; pointer-events: none; backdrop-filter: blur(4px); }
     #tooltip { position: absolute; pointer-events: none; z-index: 2; background: rgba(20,22,35,0.88); border: 1px solid var(--outline); border-radius: 6px; padding: 6px 8px; font-size: 12px; color: #e9f1ff; transform: translate(12px, 12px); min-width: 160px; max-width: 260px; display: none; }
-    .kbd { display: inline-block; padding: 1px 5px; border: 1px solid var(--outline); border-radius: 4px; background: #0d1020; font-size: 11px; color: #d0d7e2; }
+    .kbd { display: inline-block; padding: 1px 5px; border: 0; border-radius: 0; background: #0d1020; font-size: 10px; color: var(--crt-neon); box-shadow: inset 0 0 0 2px var(--crt-border), inset 0 0 0 4px #0a0f2a, 0 0 0 1px #000; text-transform: uppercase; letter-spacing: 0.4px; }
     @media (max-width: 860px) { :root { --sidebar-w: 280px; } .radio-group { grid-template-columns: repeat(2, 1fr); } }
   </style>
   </head>
@@ -106,38 +205,38 @@ Planning Checklist
             <label for="tool-eraser" title="Eraser">Erase</label>
           </div>
 
-          <div class="row"><label for="brushSize">Brush size</label><div class="value" id="brushSizeVal"></div></div>
+          <div class="row"><label for="brushSize" class="has-tip" data-tip="Diameter of the paint brush in pixels.">Brush size</label><div class="value" id="brushSizeVal"></div></div>
           <input id="brushSize" type="range" min="2" max="80" step="1" value="18">
 
-          <div class="row"><label for="massPerDot">Mass per dot</label><div class="value" id="massPerDotVal"></div></div>
+          <div class="row"><label for="massPerDot" class="has-tip" data-tip="Mass added by each spawned dot; larger = heavier bodies.">Mass per dot</label><div class="value" id="massPerDotVal"></div></div>
           <input id="massPerDot" type="range" min="0.5" max="50" step="0.5" value="4">
 
-          <div class="row"><label for="spawnRate">Spawn rate (dots/s)</label><div class="value" id="spawnRateVal"></div></div>
+          <div class="row"><label for="spawnRate" class="has-tip" data-tip="Dots spawned per second while painting.">Spawn rate (dots/s)</label><div class="value" id="spawnRateVal"></div></div>
           <input id="spawnRate" type="range" min="4" max="200" step="2" value="60">
 
           <div class="small">Tip: Hold <span class="kbd">V</span> while painting to throw with velocity.</div>
         </section>
 
         <section>
-          <div class="row"><label for="gravity">Gravity G</label><div class="value" id="gravityVal"></div></div>
+          <div class="row"><label for="gravity" class="has-tip" data-tip="Strength of gravitational attraction between bodies.">Gravity G</label><div class="value" id="gravityVal"></div></div>
           <input id="gravity" type="range" min="0.01" max="2.0" step="0.01" value="0.28">
 
-          <div class="row"><label for="timeScale">Time scale</label><div class="value" id="timeScaleVal"></div></div>
+          <div class="row"><label for="timeScale" class="has-tip" data-tip="Global time multiplier for the simulation.">Time scale</label><div class="value" id="timeScaleVal"></div></div>
           <input id="timeScale" type="range" min="0.1" max="3.0" step="0.1" value="1.8">
 
-          <div class="row"><label for="speedBoost">Speed</label><div class="value" id="speedBoostVal"></div></div>
+          <div class="row"><label for="speedBoost" class="has-tip" data-tip="Extra speed multiplier; stacks with Time scale.">Speed</label><div class="value" id="speedBoostVal"></div></div>
           <input id="speedBoost" type="range" min="0.2" max="6.0" step="0.1" value="1.0">
 
-          <div class="row"><label for="softening">Softening</label><div class="value" id="softeningVal"></div></div>
+          <div class="row"><label for="softening" class="has-tip" data-tip="Softens gravity at short distances to avoid singularities.">Softening</label><div class="value" id="softeningVal"></div></div>
           <input id="softening" type="range" min="2" max="60" step="1" value="18">
 
-          <div class="row"><label for="starThreshold">Star mass threshold</label><div class="value" id="starThresholdVal"></div></div>
+          <div class="row"><label for="starThreshold" class="has-tip" data-tip="Mass needed (with enough gas) to ignite into a star.">Star mass threshold</label><div class="value" id="starThresholdVal"></div></div>
           <input id="starThreshold" type="range" min="200" max="5000" step="10" value="1400">
 
-          <div class="row"><label for="planetThreshold">Planet mass threshold</label><div class="value" id="planetThresholdVal"></div></div>
+          <div class="row"><label for="planetThreshold" class="has-tip" data-tip="Mass needed to count as a planet (below star threshold).">Planet mass threshold</label><div class="value" id="planetThresholdVal"></div></div>
           <input id="planetThreshold" type="range" min="20" max="400" step="5" value="60">
 
-          <div class="row"><label for="igniteFrac">Ignite gas fraction</label><div class="value" id="igniteFracVal"></div></div>
+          <div class="row"><label for="igniteFrac" class="has-tip" data-tip="Minimum gas fraction required for a massive body to become a star.">Ignite gas fraction</label><div class="value" id="igniteFracVal"></div></div>
           <input id="igniteFrac" type="range" min="0.4" max="0.95" step="0.01" value="0.7">
         </section>
 
