@@ -5,16 +5,98 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Solar System Sandbox – 3D</title>
     <style>
-      html, body { margin:0; height:100%; background:#04060a; color:#e8eef6; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
-      #ui { position: fixed; top: 10px; left: 10px; background: rgba(10,14,22,0.6); border: 1px solid rgba(90,120,150,0.25); border-radius: 8px; padding: 6px 8px; font-size: 12px; backdrop-filter: blur(4px); z-index: 1; }
-      a.btn { display:inline-block; padding:4px 8px; border:1px solid #2a3b55; border-radius:6px; color:#bfe1ff; text-decoration:none; margin-right:6px; background:#0b1320; }
-      a.btn:hover { background:#0e1a31; }
+      :root {
+        --bg: #0b0e14; --panel: #11151f; --panel-2: #0f1320; --text: #e6e6e6; --muted:#9aa4b2; --accent:#6ab0ff; --outline:#222842; --sidebar-w: 320px;
+      }
+      html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+      #app { display:grid; grid-template-columns: var(--sidebar-w) 1fr; height:100vh; overflow:hidden; }
+      aside { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border-right: 1px solid var(--outline); padding: 14px; overflow-y: auto; }
+      h1 { font-size: 16px; margin: 0 0 10px; }
+      .row { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:6px 0; }
+      .row label { font-size:12px; color:var(--muted); }
+      .value { font-variant-numeric: tabular-nums; color:#ffd166; min-width:56px; text-align:right; font-size:12px; }
+      input[type=range], select, button { width:100%; }
+      select, button { background:#0d1020; color:var(--text); border:1px solid var(--outline); border-radius:6px; padding:6px 8px; font-size:12px; }
+      input[type=range]{ accent-color: var(--accent); }
+      .btn-row { display:grid; grid-template-columns: repeat(3,1fr); gap:6px; }
+      .btn-row-2 { display:grid; grid-template-columns: repeat(2,1fr); gap:6px; }
+      .warn { border-color:#633; color:#ffdede; }
+      #hud { position:absolute; top:8px; right:8px; background: rgba(10,12,20,0.5); border:1px solid var(--outline); border-radius:8px; padding:6px 8px; font-size:12px; pointer-events:none; }
+      #three-root { position:relative; }
+      /* Neon scanlines overlay */
+      #scanlines { position:absolute; inset:0; pointer-events:none; background-image: repeating-linear-gradient(to bottom, rgba(255,255,255,0.05) 0, rgba(255,255,255,0.05) 1px, rgba(0,0,0,0) 2px, rgba(0,0,0,0) 4px); opacity:0; transition: opacity 0.2s; mix-blend-mode: screen; }
+      canvas { display:block; width:100%; height:100%; }
     </style>
   </head>
   <body>
-    <div id="ui">
-      <a class="btn" href="./index.html">◀ Back</a>
-      <span>3D (Three.js) – N‑body driven</span>
+    <div id="app">
+      <aside>
+        <h1>Solar System 3D (Three.js)</h1>
+        <div class="row"><label for="tool">Tool</label></div>
+        <select id="tool">
+          <option value="gas">Gas (H/He)</option>
+          <option value="rock">Rock/Dust</option>
+          <option value="ice">Ice</option>
+          <option value="eraser">Eraser</option>
+        </select>
+        <div class="row"><label for="brushSize">Brush size</label><div id="brushSizeVal" class="value"></div></div>
+        <input id="brushSize" type="range" min="2" max="80" step="1" value="18">
+        <div class="row"><label for="massPerDot">Mass per dot</label><div id="massPerDotVal" class="value"></div></div>
+        <input id="massPerDot" type="range" min="0.5" max="50" step="0.5" value="4">
+        <div class="row"><label for="spawnRate">Spawn rate</label><div id="spawnRateVal" class="value"></div></div>
+        <input id="spawnRate" type="range" min="4" max="200" step="2" value="60">
+
+        <div class="row"><label for="gravityG">Gravity G</label><div id="gravityGVal" class="value"></div></div>
+        <input id="gravityG" type="range" min="0.01" max="2.0" step="0.01" value="0.28">
+        <div class="row"><label for="timeScale">Time scale</label><div id="timeScaleVal" class="value"></div></div>
+        <input id="timeScale" type="range" min="0.1" max="3.0" step="0.1" value="1.0">
+        <div class="row"><label for="softening">Softening</label><div id="softeningVal" class="value"></div></div>
+        <input id="softening" type="range" min="2" max="60" step="1" value="18">
+        <div class="row"><label for="edge3d">Edge behavior</label>
+          <select id="edge3d"><option value="wrap" selected>Wrap</option><option value="bounce">Bounce</option><option value="void">Void</option></select>
+        </div>
+
+        <div class="row"><label for="trails">Trails</label>
+          <select id="trails"><option value="off">Off</option><option value="short" selected>Short</option><option value="long">Long</option></select>
+        </div>
+        <div class="row"><label for="vectors">Vectors</label>
+          <select id="vectors"><option value="off" selected>Off</option><option value="vel">Velocity</option><option value="acc">Acceleration</option></select>
+        </div>
+
+        <div class="row"><label for="neonMode">Neon Mode</label>
+          <select id="neonMode"><option value="off" selected>Off</option><option value="on">On</option></select>
+        </div>
+        <div class="row"><label for="starIntensity">Star light</label><div id="starIntensityVal" class="value"></div></div>
+        <input id="starIntensity" type="range" min="0.0" max="20" step="0.1" value="10">
+        <div class="row"><label for="bloom">Bloom</label>
+          <select id="bloom"><option value="off" selected>Off</option><option value="on">On</option></select>
+        </div>
+        <div class="row"><label for="bloomStrength">Bloom strength</label><div id="bloomStrengthVal" class="value"></div></div>
+        <input id="bloomStrength" type="range" min="0.0" max="2.0" step="0.05" value="0.6">
+        <div class="row"><label for="orbitAssist">Orbit Assist</label>
+          <select id="orbitAssist"><option value="off" selected>Off</option><option value="on">On</option></select>
+        </div>
+
+        <div class="btn-row" style="margin-top:8px;">
+          <button id="seedDemo">Seed Demo</button>
+          <button id="randomBelt">Random Belt</button>
+          <button id="presetSystem">Preset System</button>
+        </div>
+        <div class="btn-row-2" style="margin-top:6px;">
+          <button id="togglePause">Pause</button>
+          <button id="clear" class="warn">Clear</button>
+        </div>
+        <div class="btn-row-2" style="margin-top:6px;">
+          <button id="save">Save</button>
+          <button id="load">Load</button>
+        </div>
+        <div id="capInfo" style="margin-top:8px; font-size:12px; color:var(--muted);">Cap: 0 / 0 bodies</div>
+        <div style="margin-top:8px;"><a href="./index.html" style="color:#bfe1ff;">◀ Back to 2D</a></div>
+      </aside>
+      <div id="three-root">
+        <div id="hud">—</div>
+        <div id="scanlines"></div>
+      </div>
     </div>
     <script type="module" src="src/main3d.js"></script>
   </body>
