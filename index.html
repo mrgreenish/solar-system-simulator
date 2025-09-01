@@ -1,0 +1,1088 @@
+<html lang="en">
+<!--
+Planning Checklist
+- Structure & Config: Single-file app; CONFIG object for all tunables.
+- UI Layout: Sidebar with tools/controls; full-window canvas; HUD/tooltip overlays.
+- Painting Logic: Brush spawns Gas/Rock/Ice (or Erase); mass/rate; V to throw.
+- Physics: 2D gravity with softening; semi-implicit leapfrog; inelastic merging.
+- Rendering: Bodies, trails, vectors, star color by mass; rings; HUD; inspector.
+- Save/Load: Persist scene + config to localStorage; seed demo and random belt.
+- Performance: Spatial hashing for collisions; cap bodies; fading trails.
+-->
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Solar System Sandbox</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0e14;
+      --panel: #11151f;
+      --panel-2: #0f1320;
+      --text: #e6e6e6;
+      --muted: #9aa4b2;
+      --accent: #6ab0ff;
+      --accent-2: #ffd166;
+      --ok: #4cd3a8;
+      --danger: #ff6b6b;
+      --outline: #222842;
+      --sidebar-w: 320px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans", sans-serif; }
+    #app { display: grid; grid-template-columns: var(--sidebar-w) 1fr; height: 100vh; width: 100vw; overflow: hidden; }
+    aside { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border-right: 1px solid var(--outline); padding: 14px; overflow-y: auto; }
+    h1 { font-size: 16px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+    .brand-dot { width: 8px; height: 8px; border-radius: 50%; background: radial-gradient(circle at 30% 30%, #fff, var(--accent)); box-shadow: 0 0 10px var(--accent); }
+    section { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px dashed var(--outline); }
+    section:last-child { border-bottom: none; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 6px 0; }
+    .row label { font-size: 12px; color: var(--muted); flex: 1; }
+    .row .value { font-variant-numeric: tabular-nums; color: var(--accent-2); min-width: 56px; text-align: right; font-size: 12px; }
+    .radio-group { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+    .radio-group input { display: none; }
+    .radio-group label { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px; border: 1px solid var(--outline); border-radius: 6px; background: #0d1020; cursor: pointer; font-size: 12px; }
+    .radio-group input:checked + label { outline: 2px solid var(--accent); background: #0e1a35; box-shadow: 0 0 0 2px rgba(106,176,255,0.15) inset; }
+    input[type="range"], select, button { width: 100%; accent-color: var(--accent); }
+    select, button, input[type="number"], input[type="text"] { background: #0d1020; color: var(--text); border: 1px solid var(--outline); border-radius: 6px; padding: 6px 8px; font-size: 12px; }
+    button { cursor: pointer; }
+    .btn-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .btn-row-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+    .warn { border-color: #633; color: #ffdede; }
+    .small { font-size: 11px; color: var(--muted); }
+    .legend { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    .gas { background: radial-gradient(circle at 30% 30%, #fff, #6ab0ff); }
+    .rock { background: radial-gradient(circle at 30% 30%, #ffe, #caa36d); }
+    .ice { background: radial-gradient(circle at 30% 30%, #fff, #9fefff); }
+    .eraser { background: linear-gradient(135deg, #333, #000); border: 1px solid #555; }
+    canvas { display: block; width: 100%; height: 100%; background: #05060a; }
+    #hud { position: absolute; top: 8px; right: 8px; background: rgba(10,12,20,0.5); border: 1px solid var(--outline); border-radius: 8px; padding: 6px 8px; font-size: 12px; color: #d6dee9; pointer-events: none; backdrop-filter: blur(4px); }
+    #tooltip { position: absolute; pointer-events: none; z-index: 2; background: rgba(20,22,35,0.88); border: 1px solid var(--outline); border-radius: 6px; padding: 6px 8px; font-size: 12px; color: #e9f1ff; transform: translate(12px, 12px); min-width: 160px; max-width: 260px; display: none; }
+    .kbd { display: inline-block; padding: 1px 5px; border: 1px solid var(--outline); border-radius: 4px; background: #0d1020; font-size: 11px; color: #d0d7e2; }
+    @media (max-width: 860px) { :root { --sidebar-w: 280px; } .radio-group { grid-template-columns: repeat(2, 1fr); } }
+  </style>
+  </head>
+  <body>
+    <div id="app">
+      <aside>
+        <h1><span class="brand-dot"></span> Solar System Sandbox</h1>
+
+        <section>
+          <details open>
+            <summary class="small">Planning Checklist</summary>
+            <ul class="small">
+              <li>Config-driven single file; clear code sections</li>
+              <li>Sidebar controls; canvas + HUD/tooltip</li>
+              <li>Paint Gas/Rock/Ice, erase; V to throw</li>
+              <li>Gravity + softening; leapfrog; inelastic merge</li>
+              <li>Bodies, trails, vectors, star colors, rings</li>
+              <li>Save/Load via localStorage; demo seeds</li>
+              <li>Spatial hashing; body cap; fading trails</li>
+            </ul>
+          </details>
+        </section>
+
+        <section>
+          <div class="legend" aria-hidden="true">
+            <span class="dot gas"></span> Gas
+            <span class="dot rock"></span> Rock/Dust
+            <span class="dot ice"></span> Ice
+            <span class="dot eraser"></span> Eraser
+          </div>
+        </section>
+
+        <section>
+          <div class="row"><label>Tool</label></div>
+          <div class="radio-group" role="radiogroup" aria-label="Tools">
+            <input type="radio" name="tool" id="tool-gas" value="gas" checked>
+            <label for="tool-gas" title="Gas (H/He)">Gas</label>
+            <input type="radio" name="tool" id="tool-rock" value="rock">
+            <label for="tool-rock" title="Rock/Dust">Rock</label>
+            <input type="radio" name="tool" id="tool-ice" value="ice">
+            <label for="tool-ice" title="Ice">Ice</label>
+            <input type="radio" name="tool" id="tool-eraser" value="eraser">
+            <label for="tool-eraser" title="Eraser">Erase</label>
+          </div>
+
+          <div class="row"><label for="brushSize">Brush size</label><div class="value" id="brushSizeVal"></div></div>
+          <input id="brushSize" type="range" min="2" max="80" step="1" value="18">
+
+          <div class="row"><label for="massPerDot">Mass per dot</label><div class="value" id="massPerDotVal"></div></div>
+          <input id="massPerDot" type="range" min="0.5" max="50" step="0.5" value="4">
+
+          <div class="row"><label for="spawnRate">Spawn rate (dots/s)</label><div class="value" id="spawnRateVal"></div></div>
+          <input id="spawnRate" type="range" min="4" max="200" step="2" value="60">
+
+          <div class="small">Tip: Hold <span class="kbd">V</span> while painting to throw with velocity.</div>
+        </section>
+
+        <section>
+          <div class="row"><label for="gravity">Gravity G</label><div class="value" id="gravityVal"></div></div>
+          <input id="gravity" type="range" min="0.01" max="2.0" step="0.01" value="0.28">
+
+          <div class="row"><label for="timeScale">Time scale</label><div class="value" id="timeScaleVal"></div></div>
+          <input id="timeScale" type="range" min="0.1" max="3.0" step="0.1" value="1.8">
+
+          <div class="row"><label for="speedBoost">Speed</label><div class="value" id="speedBoostVal"></div></div>
+          <input id="speedBoost" type="range" min="0.2" max="6.0" step="0.1" value="1.0">
+
+          <div class="row"><label for="softening">Softening</label><div class="value" id="softeningVal"></div></div>
+          <input id="softening" type="range" min="2" max="60" step="1" value="18">
+
+          <div class="row"><label for="starThreshold">Star mass threshold</label><div class="value" id="starThresholdVal"></div></div>
+          <input id="starThreshold" type="range" min="200" max="5000" step="10" value="1400">
+
+          <div class="row"><label for="planetThreshold">Planet mass threshold</label><div class="value" id="planetThresholdVal"></div></div>
+          <input id="planetThreshold" type="range" min="20" max="400" step="5" value="60">
+
+          <div class="row"><label for="igniteFrac">Ignite gas fraction</label><div class="value" id="igniteFracVal"></div></div>
+          <input id="igniteFrac" type="range" min="0.4" max="0.95" step="0.01" value="0.7">
+        </section>
+
+        <section>
+          <div class="row"><label for="trails">Trails</label>
+            <select id="trails"><option value="off">Off</option><option value="short" selected>Short</option><option value="long">Long</option></select></div>
+          <div class="row"><label for="vectors">Vectors</label>
+            <select id="vectors"><option value="off" selected>Off</option><option value="vel">Velocity</option><option value="acc">Acceleration</option></select></div>
+          <div class="row"><label for="edge">Edge behavior</label>
+            <select id="edge"><option value="wrap" selected>Wrap</option><option value="bounce">Bounce</option><option value="void">Void</option></select></div>
+          <div class="row"><label for="orbitAssist">Orbit assist</label>
+            <input id="orbitAssist" type="checkbox" checked></div>
+          <div class="row"><label for="orbitGuide">Orbit guide</label>
+            <input id="orbitGuide" type="checkbox" checked></div>
+          <div class="small" style="margin-top:6px;">
+            Tip: Aim for <strong>v/v_circ ≈ 1.0</strong> for near-circular orbits; <strong>&lt; 1</strong> is suborbital (falls inward), <strong>&gt; 1</strong> gives elliptical/escape. Use <span class="kbd">V</span> to tweak eccentricity.
+          </div>
+        </section>
+
+        <section>
+          <div class="btn-row">
+            <button id="seedDemo">Seed Demo</button>
+            <button id="randomBelt">Random Belt</button>
+            <button id="clear" class="warn">Clear</button>
+            <button id="presetSystem">Preset System</button>
+          </div>
+          <div class="btn-row-2" style="margin-top:6px;">
+            <button id="togglePause">Pause</button>
+            <button id="centerView">Center View</button>
+          </div>
+        </section>
+
+        <section>
+          <div class="btn-row-2">
+            <button id="save">Save</button>
+            <button id="load">Load</button>
+          </div>
+          <div class="small" style="margin-top:6px;">Saves to localStorage. Includes scene and current config.</div>
+        </section>
+
+        <section class="small">
+          Shortcuts: <span class="kbd">Space</span> Pause, <span class="kbd">1</span> Gas, <span class="kbd">2</span> Rock, <span class="kbd">3</span> Ice
+          <div id="capInfo" style="margin-top:6px;">Cap: 0 / 0 bodies</div>
+        </section>
+      </aside>
+
+      <div style="position: relative;">
+        <canvas id="canvas"></canvas>
+        <div id="hud"></div>
+        <div id="tooltip" role="tooltip" aria-hidden="true"></div>
+      </div>
+    </div>
+
+    <script>
+      // ===============================
+      // Config
+      // ===============================
+      // Purpose: Centralize all tweakable constants and defaults.
+      const CONFIG = {
+        // Physics
+        G: 0.28,                 // Gravitational constant
+        softening: 18,           // Softening (pixels)
+        timeScale: 1.0,          // Global time multiplier
+        dtTarget: 1/60,          // Target timestep (s)
+        maxDt: 1/20,             // Clamp huge frame gaps
+        physicsHz: 180,          // Fixed physics rate for smoothness
+        gravityCutoff: 1200,     // Ignore gravity beyond this (perf), px
+
+        // Densities (relative units)
+        density: { gas: 0.7, rock: 3.2, ice: 1.2 },
+        radiusScale: 2.2,        // Visual radius scale
+
+        // Classification
+        starMassThreshold: 1400,
+        planetMassThreshold: 60,
+        igniteGasFraction: 0.7,
+
+        // Rendering
+        trailLength: { off: 0, short: 24, long: 60 },
+        fadeAlpha: { off: 1.0, short: 0.16, long: 0.06 }, // background fade
+        trailAlpha: 0.4,
+        vectorScaleVel: 0.8,
+        vectorScaleAcc: 120,
+        orbitGuideScale: 18,     // pixels per (px/s) for orbit guide arrow
+        speedBoost: 1.0,         // Additional speed multiplier from Speed slider
+        minDrawRadius: 1.2,
+        backgroundStars: 220,
+
+        // Body limits & collisions
+        maxBodies: 800,
+        gridSize: 48,
+
+        // Painting
+        brushSize: 18,
+        massPerDot: 4,
+        spawnRate: 60,
+        throwScale: 2.0,  // px of mouse/frame to velocity
+
+        // Edges
+        edgeBehavior: 'wrap', // wrap | bounce | void
+
+        // Picking
+        pickRadius: 14,
+
+        // Save
+        saveKey: 'solar-sandbox-state-v1'
+      };
+
+      // ===============================
+      // State
+      // ===============================
+      // Purpose: Hold bodies, UI selections, and runtime variables.
+      const State = {
+        bodies: [],
+        nextId: 1,
+        paused: false,
+        trails: 'short',
+        vectors: 'off', // off|vel|acc
+        tool: 'gas',
+        orbitAssist: true,
+        orbitGuide: true,
+        canvas: null,
+        ctx: null,
+        w: 0, h: 0, dpr: 1,
+        mouse: { x:0, y:0, down:false, lastX:0, lastY:0, throwing:false },
+        lastTime: performance.now()/1000,
+        spawnAccum: 0,
+        bgStars: [],
+        fps: 0, fpsAccum: 0, fpsFrames: 0,
+        hoverId: null,
+        hash: new Map(),
+        accum: 0,
+        interpAlpha: 0,
+      };
+
+      // ===============================
+      // UI Bindings
+      // ===============================
+      // Purpose: Wire DOM controls to CONFIG/State and update labels.
+      function bindUI() {
+        const byId = id => document.getElementById(id);
+        const setVal = (id, v) => byId(id).textContent = v;
+
+        for (const name of ['gas','rock','ice','eraser']) {
+          const input = byId(`tool-${name}`);
+          input.addEventListener('change', () => { if (input.checked) State.tool = name; });
+        }
+
+        const sliders = [
+          ['brushSize', 'brushSizeVal', 'px', v => CONFIG.brushSize = +v],
+          ['massPerDot', 'massPerDotVal', '', v => CONFIG.massPerDot = +v],
+          ['spawnRate', 'spawnRateVal', '/s', v => CONFIG.spawnRate = +v],
+          ['gravity', 'gravityVal', '', v => CONFIG.G = +v],
+          ['timeScale', 'timeScaleVal', 'x', v => CONFIG.timeScale = +v],
+          ['speedBoost', 'speedBoostVal', 'x', v => CONFIG.speedBoost = +v],
+          ['softening', 'softeningVal', 'px', v => CONFIG.softening = +v],
+          ['starThreshold', 'starThresholdVal', '', v => CONFIG.starMassThreshold = +v],
+          ['planetThreshold', 'planetThresholdVal', '', v => CONFIG.planetMassThreshold = +v],
+          ['igniteFrac', 'igniteFracVal', '', v => CONFIG.igniteGasFraction = +v],
+        ];
+        for (const [id, label, suffix, on] of sliders) {
+          const el = byId(id);
+          const update = () => { on(el.value); setVal(label, el.value + ' ' + suffix); updateCapInfo(); };
+          el.addEventListener('input', update); update();
+        }
+
+        const trails = byId('trails');
+        trails.addEventListener('change', () => { State.trails = trails.value; });
+        State.trails = trails.value;
+
+        const vectors = byId('vectors');
+        vectors.addEventListener('change', () => { State.vectors = vectors.value; });
+        State.vectors = vectors.value;
+
+        const edge = byId('edge');
+        edge.addEventListener('change', () => { CONFIG.edgeBehavior = edge.value; });
+        CONFIG.edgeBehavior = edge.value;
+
+        // Orbit Assist
+        const orbitAssist = byId('orbitAssist');
+        State.orbitAssist = orbitAssist.checked;
+        orbitAssist.addEventListener('change', () => { State.orbitAssist = orbitAssist.checked; });
+
+        // Orbit Guide
+        const orbitGuide = byId('orbitGuide');
+        State.orbitGuide = orbitGuide.checked;
+        orbitGuide.addEventListener('change', () => { State.orbitGuide = orbitGuide.checked; });
+
+        byId('seedDemo').addEventListener('click', seedDemo);
+        byId('randomBelt').addEventListener('click', seedRandomBelt);
+        byId('presetSystem').addEventListener('click', seedPresetSystem);
+        byId('clear').addEventListener('click', clearBodies);
+        byId('togglePause').addEventListener('click', () => {
+          State.paused = !State.paused; byId('togglePause').textContent = State.paused ? 'Resume' : 'Pause';
+        });
+        byId('centerView').addEventListener('click', () => flashHUD('Centered'));
+        byId('save').addEventListener('click', saveToLocalStorage);
+        byId('load').addEventListener('click', loadFromLocalStorage);
+
+        updateCapInfo();
+      }
+
+      function updateCapInfo() {
+        const el = document.getElementById('capInfo');
+        el.textContent = `Cap: ${State.bodies.length} / ${CONFIG.maxBodies} bodies`;
+      }
+
+      // ===============================
+      // Canvas Setup
+      // ===============================
+      function initCanvas() {
+        State.canvas = document.getElementById('canvas');
+        State.ctx = State.canvas.getContext('2d');
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+        // Background stars
+        State.bgStars = Array.from({length: CONFIG.backgroundStars}, () => ({
+          x: Math.random(), y: Math.random(), r: Math.random()*1.2+0.3, a: Math.random()*0.5+0.2
+        }));
+      }
+
+      function resizeCanvas() {
+        const dpr = window.devicePixelRatio || 1;
+        const rect = State.canvas.getBoundingClientRect();
+        State.w = Math.max(1, Math.floor(rect.width * dpr));
+        State.h = Math.max(1, Math.floor(rect.height * dpr));
+        State.dpr = dpr;
+        State.canvas.width = State.w;
+        State.canvas.height = State.h;
+      }
+
+      // ===============================
+      // Factories & Utilities
+      // ===============================
+      // Purpose: Create bodies and compute derived parameters.
+      function createBody(x, y, mass, comp, vx=0, vy=0) {
+        const sum = comp.gas + comp.rock + comp.ice || 1;
+        const mix = { gas: comp.gas/sum, rock: comp.rock/sum, ice: comp.ice/sum };
+        const density = mixDensity(mix);
+        const radius = radiusFromMassDensity(mass, density);
+        return {
+          id: State.nextId++, x, y, vx, vy, ax:0, ay:0,
+          mass, radius, density, comp: mix,
+          type: classify(mass, mix.gas),
+          trail: [],
+        };
+      }
+
+      // Computes effective density via harmonic mean of component densities.
+      function mixDensity(frac) {
+        const d = CONFIG.density;
+        const inv = (frac.gas/d.gas) + (frac.rock/d.rock) + (frac.ice/d.ice);
+        return inv > 0 ? 1/inv : d.rock;
+      }
+
+      // Converts mass and density to radius (r ∝ cbrt(mass/density)).
+      function radiusFromMassDensity(mass, density) {
+        const r = CONFIG.radiusScale * Math.cbrt(Math.max(mass/Math.max(density,1e-6), 0));
+        return Math.max(r, CONFIG.minDrawRadius);
+      }
+
+      // Classifies body type based on mass thresholds and gas fraction.
+      function classify(mass, gasFrac) {
+        if (mass >= CONFIG.starMassThreshold && gasFrac >= CONFIG.igniteGasFraction) return 'star';
+        if (mass >= CONFIG.planetMassThreshold && mass < CONFIG.starMassThreshold) return 'planet';
+        return 'debris';
+      }
+
+      // Returns circular orbit speed around a central mass at radius r: v = sqrt(G M / r)
+      function circularSpeed(G, M, r) {
+        return r > 0 ? Math.sqrt(G * M / r) : 0;
+      }
+
+      // Planet subtype refinement by dominant composition.
+      function planetSubtype(comp) {
+        if (comp.gas >= 0.55) return 'gas-giant';
+        if (comp.ice >= 0.55) return 'ice-giant';
+        return 'terrestrial';
+      }
+
+      // Maps star mass to approximate temperature and color.
+      function starColor(mass) {
+        const m0 = CONFIG.starMassThreshold;
+        const t = Math.min(1, Math.max(0, (mass - m0) / (m0*4))); // normalize
+        // gradient: red -> yellow -> white -> blue-white
+        const stops = [
+          {r:255,g:120,b:80}, {r:255,g:210,b:110}, {r:245,g:245,b:255}, {r:200,g:220,b:255}
+        ];
+        const seg = t * (stops.length - 1);
+        const i = Math.floor(seg);
+        const f = seg - i;
+        const a = stops[i], b = stops[Math.min(i+1, stops.length-1)];
+        return { r: Math.round(a.r + (b.r-a.r)*f), g: Math.round(a.g + (b.g-a.g)*f), b: Math.round(a.b + (b.b-a.b)*f), temp: 3000 + 7000*t };
+      }
+
+      function withAlpha(rgb, a) { return `rgba(${rgb.r},${rgb.g},${rgb.b},${a})`; }
+      function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+      function getTimeScale() { return CONFIG.timeScale * CONFIG.speedBoost; }
+
+      // ===============================
+      // Input & Interaction
+      // ===============================
+      // Purpose: Painting, erasing, throwing, keyboard shortcuts, picking.
+      function initInput() {
+        const c = State.canvas;
+        c.addEventListener('mousedown', e => { State.mouse.down = true; updateMouse(e); });
+        window.addEventListener('mouseup', () => { State.mouse.down = false; });
+        c.addEventListener('mousemove', e => { const {x,y}=mousePos(e); State.mouse.lastX=State.mouse.x; State.mouse.lastY=State.mouse.y; State.mouse.x=x; State.mouse.y=y; });
+        c.addEventListener('mouseleave', () => { State.mouse.down = false; });
+
+        window.addEventListener('keydown', e => {
+          if (e.code === 'Space') { e.preventDefault(); State.paused = !State.paused; document.getElementById('togglePause').textContent = State.paused ? 'Resume' : 'Pause'; }
+          if (e.key === '1') document.getElementById('tool-gas').checked = true, State.tool = 'gas';
+          if (e.key === '2') document.getElementById('tool-rock').checked = true, State.tool = 'rock';
+          if (e.key === '3') document.getElementById('tool-ice').checked = true, State.tool = 'ice';
+          if (e.key === 'v' || e.key === 'V') State.mouse.throwing = true;
+        });
+        window.addEventListener('keyup', e => { if (e.key === 'v' || e.key === 'V') State.mouse.throwing = false; });
+      }
+
+      function mousePos(e) { const r = State.canvas.getBoundingClientRect(); return { x: (e.clientX - r.left) * State.dpr, y: (e.clientY - r.top) * State.dpr }; }
+      function updateMouse(e) { const p = mousePos(e); State.mouse.x = p.x; State.mouse.y = p.y; }
+
+      // ===============================
+      // Physics (Gravity & Integration)
+      // ===============================
+      // Purpose: Compute accelerations and advance system with leapfrog.
+      function computeAccelerations(bodies) {
+        const n = bodies.length;
+        for (let i=0;i<n;i++){ bodies[i].ax=0; bodies[i].ay=0; }
+        const eps2 = CONFIG.softening * CONFIG.softening;
+        const cutoff2 = CONFIG.gravityCutoff * CONFIG.gravityCutoff;
+        for (let i=0;i<n;i++){
+          const bi=bodies[i];
+          for (let j=i+1;j<n;j++){
+            const bj=bodies[j];
+            let dx=bj.x-bi.x, dy=bj.y-bi.y;
+            const r2=dx*dx+dy*dy; if (r2>cutoff2) continue;
+            const invR=1/Math.sqrt(r2+eps2); const invR3=invR*invR*invR;
+            const f=CONFIG.G*invR3; const fx=dx*f, fy=dy*f;
+            // Acceleration on i from j: a_i += G * m_j * r_hat / r^2
+            bi.ax += fx*bj.mass; bi.ay += fy*bj.mass;
+            // Equal and opposite on j from i
+            bj.ax -= fx*bi.mass; bj.ay -= fy*bi.mass;
+          }
+        }
+      }
+
+      function integrate(bodies, dt) {
+        // Leapfrog (Kick-Drift-Kick): half velocity kick, full drift, recompute a, half kick.
+        const sdt = dt * getTimeScale();
+        const half = 0.5 * sdt;
+        // Kick half-step
+        for (let b of bodies) { b.vx += b.ax * half; b.vy += b.ay * half; }
+        // Drift full-step
+        for (let b of bodies) { b.x += b.vx * sdt; b.y += b.vy * sdt; }
+        // Recompute accelerations at new positions
+        computeAccelerations(bodies);
+        // Kick half-step to complete
+        for (let b of bodies) { b.vx += b.ax * half; b.vy += b.ay * half; }
+      }
+
+      // ===============================
+      // Edges
+      // ===============================
+      // Purpose: Apply wrap/bounce/void behaviors to bodies.
+      function handleEdges() {
+        const W=State.w, H=State.h, eb=CONFIG.edgeBehavior;
+        if (eb==='wrap') {
+          for (const b of State.bodies){
+            if (b.x < 0) b.x += W; else if (b.x >= W) b.x -= W;
+            if (b.y < 0) b.y += H; else if (b.y >= H) b.y -= H;
+          }
+        } else if (eb==='bounce') {
+          for (const b of State.bodies){
+            if (b.x - b.radius < 0 && b.vx < 0){ b.x = b.radius; b.vx = -b.vx; }
+            if (b.x + b.radius > W && b.vx > 0){ b.x = W - b.radius; b.vx = -b.vx; }
+            if (b.y - b.radius < 0 && b.vy < 0){ b.y = b.radius; b.vy = -b.vy; }
+            if (b.y + b.radius > H && b.vy > 0){ b.y = H - b.radius; b.vy = -b.vy; }
+          }
+        } else if (eb==='void') {
+          const keep=[]; const m=40;
+          for (const b of State.bodies){
+            if (b.x < -m || b.x > W+m || b.y < -m || b.y > H+m) continue; keep.push(b);
+          }
+          if (keep.length !== State.bodies.length) { State.bodies = keep; updateCapInfo(); }
+        }
+      }
+
+      // ===============================
+      // Collisions & Merging
+      // ===============================
+      // Purpose: Detect overlaps via spatial hash; merge inelastically.
+      function rebuildHash() {
+        State.hash.clear();
+        const gs = CONFIG.gridSize;
+        for (let i=0;i<State.bodies.length;i++){
+          const b=State.bodies[i];
+          const gx = Math.floor(b.x/gs), gy = Math.floor(b.y/gs);
+          const key = gx+','+gy; if (!State.hash.has(key)) State.hash.set(key, []);
+          State.hash.get(key).push(i);
+        }
+      }
+
+      function resolveCollisions() {
+        const bodies = State.bodies; const gs = CONFIG.gridSize;
+        const removed = new Set(); rebuildHash();
+        const nbh = [[0,0],[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+        for (let i=0;i<bodies.length;i++){
+          if (removed.has(i)) continue; const A=bodies[i];
+          const gx=Math.floor(A.x/gs), gy=Math.floor(A.y/gs);
+          for (const [dx,dy] of nbh){
+            const cell = State.hash.get((gx+dx)+','+(gy+dy)); if (!cell) continue;
+            for (const j of cell){ if (j<=i || removed.has(j)) continue; const B=bodies[j];
+              const dxp=B.x-A.x, dyp=B.y-A.y; const r=A.radius+B.radius;
+              if (dxp*dxp + dyp*dyp <= r*r){
+                // Merge smaller into larger; protect stars from easy erasure by large eraser
+                const [big, small, smallIdx] = (A.mass>=B.mass) ? [A,B,j] : [B,A,i];
+                mergeBodies(big, small);
+                removed.add(smallIdx);
+              }
+            }
+          }
+        }
+        if (removed.size){ State.bodies = bodies.filter((_,idx)=>!removed.has(idx)); updateCapInfo(); }
+      }
+
+      // Inelastic merge: conserve mass and momentum, recompute mix/density/radius/type.
+      function mergeBodies(A, B) {
+        const M = A.mass + B.mass; if (M<=0) return;
+        const vx = (A.vx*A.mass + B.vx*B.mass) / M;
+        const vy = (A.vy*A.mass + B.vy*B.mass) / M;
+        const x = (A.x*A.mass + B.x*B.mass) / M;
+        const y = (A.y*A.mass + B.y*B.mass) / M;
+        const comp = {
+          gas: (A.comp.gas*A.mass + B.comp.gas*B.mass)/M,
+          rock: (A.comp.rock*A.mass + B.comp.rock*B.mass)/M,
+          ice: (A.comp.ice*A.mass + B.comp.ice*B.mass)/M,
+        };
+        A.mass=M; A.vx=vx; A.vy=vy; A.x=x; A.y=y; A.comp=comp;
+        A.density = mixDensity(comp);
+        A.radius = radiusFromMassDensity(M, A.density);
+        A.type = classify(A.mass, A.comp.gas);
+        // Keep short trail by sampling last positions
+        if (A.trail.length > (CONFIG.trailLength[State.trails]||0)) A.trail.splice(0, A.trail.length - (CONFIG.trailLength[State.trails]||0));
+      }
+
+      // ===============================
+      // Painting & Eraser
+      // ===============================
+      // Purpose: Spawn bodies while dragging based on tool and sliders.
+      function paintStep(dt) {
+        if (!State.mouse.down) return;
+        if (State.bodies.length >= CONFIG.maxBodies) return;
+
+        // Use accumulator so spawn rate is stable across frame times.
+        const rate = CONFIG.spawnRate; // dots per second
+        State.spawnAccum += rate * dt;
+        const dotsThisFrame = Math.min(50, Math.floor(State.spawnAccum));
+        State.spawnAccum -= dotsThisFrame;
+        const bx = State.mouse.x, by = State.mouse.y;
+        const brush = CONFIG.brushSize * State.dpr;
+        const throwVX = State.mouse.throwing ? (State.mouse.x - State.mouse.lastX) * CONFIG.throwScale : 0;
+        const throwVY = State.mouse.throwing ? (State.mouse.y - State.mouse.lastY) * CONFIG.throwScale : 0;
+
+        if (State.tool === 'eraser') {
+          // Eraser removes bodies within brush. Avoid deleting stars when brush is large.
+          const eraseBigStars = brush <= 10; // small brush can target stars
+          State.bodies = State.bodies.filter(b => {
+            const dx=b.x-bx, dy=b.y-by; const hit = dx*dx+dy*dy <= brush*brush;
+            if (!hit) return true;
+            if (b.type==='star' && !eraseBigStars) return true; // protect star unless precise
+            return false;
+          });
+          updateCapInfo();
+          return;
+        }
+
+        for (let i=0;i<dotsThisFrame && State.bodies.length < CONFIG.maxBodies;i++){
+          const ang = Math.random()*Math.PI*2; const rad = Math.random()*brush*0.6;
+          const x = bx + Math.cos(ang)*rad; const y = by + Math.sin(ang)*rad;
+          const mass = CONFIG.massPerDot * (0.6 + Math.random()*0.8);
+          const comp = State.tool==='gas' ? {gas:0.95,rock:0.03,ice:0.02} :
+                       State.tool==='rock'? {gas:0.05,rock:0.9, ice:0.05} :
+                       {gas:0.1, rock:0.1, ice:0.8};
+
+          // Orbit Assist: give new bodies a tangential velocity for circular orbit around largest star.
+          let baseVX = 0, baseVY = 0;
+          if (State.orbitAssist) {
+            const star = largestStar();
+            if (star) {
+              const rx = x - star.x, ry = y - star.y; const r = Math.hypot(rx, ry);
+              if (r > Math.max(10, star.radius * 1.2)) {
+                const v = circularSpeed(CONFIG.G, star.mass, r);
+                // Tangential unit vector (CCW)
+                const tx = -ry / r, ty = rx / r;
+                baseVX = tx * v; baseVY = ty * v;
+              }
+            }
+          }
+
+          // Throw adjusts eccentricity; small jitter to avoid perfect overlap
+          const jitter = 0.6;
+          const vx = baseVX + throwVX * 0.5 + (Math.random()-0.5)*jitter;
+          const vy = baseVY + throwVY * 0.5 + (Math.random()-0.5)*jitter;
+          State.bodies.push(createBody(x, y, mass, comp, vx, vy));
+        }
+      }
+
+      // ===============================
+      // Rendering
+      // ===============================
+      // Purpose: Draw background, trails fade, bodies, vectors, HUD, tooltip.
+      function drawBackground(ctx) {
+        const { w, h, bgStars } = State;
+        ctx.save();
+        ctx.fillStyle = '#05060a';
+        ctx.fillRect(0,0,w,h);
+        for (const s of bgStars) {
+          const x = s.x * w, y = s.y * h;
+          const grad = ctx.createRadialGradient(x, y, 0, x, y, s.r * State.dpr * 2.0);
+          grad.addColorStop(0, 'rgba(220,235,255,0.9)');
+          grad.addColorStop(1, 'rgba(220,235,255,0)');
+          ctx.fillStyle = grad; ctx.globalAlpha = s.a;
+          ctx.beginPath(); ctx.arc(x, y, s.r * State.dpr * 2.0, 0, Math.PI*2); ctx.fill();
+        }
+        ctx.restore(); ctx.globalAlpha = 1.0;
+      }
+
+      function drawTrailsFade(ctx) {
+        const mode = State.trails; const fade = CONFIG.fadeAlpha[mode];
+        if (mode==='off' || fade>=1.0) { ctx.clearRect(0,0,State.w,State.h); drawBackground(ctx); return; }
+        ctx.fillStyle = `rgba(5,6,10,${fade})`;
+        ctx.fillRect(0,0,State.w,State.h);
+      }
+
+      function bodyColor(b) {
+        if (b.type==='star') {
+          const sc = starColor(b.mass); return {r:sc.r,g:sc.g,b:sc.b};
+        }
+        if (b.comp.gas >= b.comp.ice && b.comp.gas >= b.comp.rock) return {r:240,g:225,b:170};
+        if (b.comp.ice >= b.comp.gas && b.comp.ice >= b.comp.rock) return {r:170,g:230,b:255};
+        return {r:205,g:150,b:100};
+      }
+
+      function drawBodies(ctx) {
+        const step = 1/CONFIG.physicsHz * getTimeScale();
+        const alpha = State.interpAlpha;
+        for (const b of State.bodies) {
+          const x = b.x + b.vx * step * alpha;
+          const y = b.y + b.vy * step * alpha;
+          const r=Math.max(1, b.radius);
+          // Rings for giants
+          if (b.type==='planet' && (b.comp.gas>=0.55 || b.comp.ice>=0.55) && r>6) {
+            ctx.save(); ctx.globalAlpha=0.35; ctx.strokeStyle = b.comp.gas>=0.55 ? '#a0c8ff' : '#c9f0ff';
+            ctx.lineWidth = Math.max(1, r*0.2);
+            ctx.beginPath(); ctx.ellipse(x, y, r*1.8, r*0.8, 0.6, 0, Math.PI*2); ctx.stroke(); ctx.restore();
+          }
+
+          // Glow for stars
+          if (b.type==='star') {
+            const col = starColor(b.mass); const glow = Math.min(80, r*3.5);
+            const g = ctx.createRadialGradient(x, y, Math.max(2, r*0.5), x, y, glow);
+            g.addColorStop(0, withAlpha(col, 0.9));
+            g.addColorStop(0.5, withAlpha(col, 0.35));
+            g.addColorStop(1, withAlpha(col, 0.02));
+            ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, glow, 0, Math.PI*2); ctx.fill();
+          }
+
+          // Main disk
+          const col = bodyColor(b);
+          const grad = ctx.createRadialGradient(x - r*0.35, y - r*0.35, r*0.1, x, y, r);
+          grad.addColorStop(0, '#ffffff');
+          grad.addColorStop(0.25, `rgb(${col.r},${col.g},${col.b})`);
+          grad.addColorStop(1, 'rgba(255,255,255,0.06)');
+          ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+          ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(0,0,0,0.2)'; ctx.stroke();
+        }
+      }
+
+      function drawVectors(ctx) {
+        if (State.vectors==='off') return;
+        ctx.save(); ctx.lineWidth=1; ctx.strokeStyle = State.vectors==='vel' ? '#58e6a9' : '#ffb86b';
+        const scale = State.vectors==='vel' ? CONFIG.vectorScaleVel : CONFIG.vectorScaleAcc;
+        const step = 1/CONFIG.physicsHz * getTimeScale();
+        const alpha = State.interpAlpha;
+        for (const b of State.bodies) {
+          const px = b.x + b.vx * step * alpha;
+          const py = b.y + b.vy * step * alpha;
+          const vx = State.vectors==='vel' ? b.vx : b.ax*scale;
+          const vy = State.vectors==='vel' ? b.vy : b.ay*scale;
+          drawArrow(ctx, px, py, px + vx*0.8, py + vy*0.8);
+        }
+        ctx.restore();
+      }
+
+      // Draw a cursor arrow indicating circular orbit direction and magnitude
+      function drawOrbitGuide(ctx) {
+        if (!State.orbitGuide) return;
+        const star = largestStar(); if (!star) return;
+        const mx = State.mouse.x, my = State.mouse.y;
+        const rx = mx - star.x, ry = my - star.y; const r = Math.hypot(rx, ry);
+        if (r < Math.max(12, star.radius * 1.2)) return;
+        const v = circularSpeed(CONFIG.G, star.mass, r);
+        if (v <= 0) return;
+        const tx = -ry / r, ty = rx / r; // tangential unit vector
+        const len = v * CONFIG.orbitGuideScale;
+        const x2 = mx + tx * len, y2 = my + ty * len;
+        ctx.save();
+        ctx.lineWidth = 1.5; ctx.strokeStyle = '#66b7ff';
+        drawArrow(ctx, mx, my, x2, y2);
+        // Label
+        ctx.fillStyle = 'rgba(200,220,255,0.9)';
+        ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+        ctx.fillText(`v_circ ${v.toFixed(2)} px/s`, x2 + 6, y2 + 2);
+        ctx.restore();
+      }
+
+      // Draws a small arrow from (x1,y1) to (x2,y2).
+      function drawArrow(ctx,x1,y1,x2,y2){
+        ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+        const ang=Math.atan2(y2-y1,x2-x1), len=6; ctx.beginPath();
+        ctx.moveTo(x2,y2);
+        ctx.lineTo(x2 - Math.cos(ang-0.4)*len, y2 - Math.sin(ang-0.4)*len);
+        ctx.moveTo(x2,y2);
+        ctx.lineTo(x2 - Math.cos(ang+0.4)*len, y2 - Math.sin(ang+0.4)*len);
+        ctx.stroke();
+      }
+
+      function drawHUD() {
+        const hud = document.getElementById('hud');
+        const t = [
+          `Bodies: ${State.bodies.length}/${CONFIG.maxBodies}`,
+          `FPS: ${State.fps.toFixed(0)}`,
+          `Speed: ${getTimeScale().toFixed(1)}x` ,
+          `Tool: ${State.tool} • Trails: ${State.trails} • Edge: ${CONFIG.edgeBehavior}`,
+          State.paused ? 'Paused' : 'Running'
+        ].join('  |  ');
+        hud.textContent = t;
+      }
+
+      function drawTooltip() {
+        const tip = document.getElementById('tooltip');
+        const id = State.hoverId; if (id==null) { tip.style.display='none'; return; }
+        const b = State.bodies.find(o=>o.id===id); if (!b) { tip.style.display='none'; return; }
+        const speed = Math.hypot(b.vx, b.vy);
+        const gasPct = Math.round(b.comp.gas*100), rockPct=Math.round(b.comp.rock*100), icePct=Math.round(b.comp.ice*100);
+        const subtype = b.type==='planet'? ` (${planetSubtype(b.comp)})` : '';
+        const star = b.type==='star'? starColor(b.mass) : null;
+        // Compute v/v_circ relative to largest star, when meaningful
+        let vvCirc = '—';
+        const s = largestStar();
+        if (s && b.id !== s.id) {
+          const rx = b.x - s.x, ry = b.y - s.y; const r = Math.hypot(rx, ry);
+          const minR = Math.max(12, s.radius * 1.2);
+          if (r > minR) {
+            const vCirc = circularSpeed(CONFIG.G, s.mass, r);
+            if (vCirc > 0) vvCirc = (speed / vCirc).toFixed(2);
+          }
+        }
+        tip.innerHTML = `<div><strong>${b.type}${subtype}</strong>${star?` • Temp: ${Math.round(star.temp)}K`:''}</div>
+          <div>Mass: ${b.mass.toFixed(1)}</div>
+          <div>Radius: ${b.radius.toFixed(1)} px</div>
+          <div>Velocity: ${speed.toFixed(2)} px/s</div>
+          <div>v/v_circ: ${vvCirc}</div>
+          <div>Comp: gas ${gasPct}%, rock ${rockPct}%, ice ${icePct}%</div>`;
+        const rect = State.canvas.getBoundingClientRect();
+        tip.style.left = `${rect.left/1 + State.mouse.x/State.dpr + 14}px`;
+        tip.style.top = `${rect.top/1 + State.mouse.y/State.dpr + 14}px`;
+        tip.style.display = 'block';
+      }
+
+      // ===============================
+      // Serialization (localStorage)
+      // ===============================
+      // Purpose: Save and load scene/config to localStorage.
+      function saveToLocalStorage(){
+        const payload = {
+          version: 1,
+          config: {
+            G: CONFIG.G, softening: CONFIG.softening, timeScale: CONFIG.timeScale,
+            starMassThreshold: CONFIG.starMassThreshold, planetMassThreshold: CONFIG.planetMassThreshold,
+            igniteGasFraction: CONFIG.igniteGasFraction, edgeBehavior: CONFIG.edgeBehavior,
+            brushSize: CONFIG.brushSize, massPerDot: CONFIG.massPerDot, spawnRate: CONFIG.spawnRate,
+            speedBoost: CONFIG.speedBoost,
+            trails: State.trails, vectors: State.vectors,
+            orbitAssist: State.orbitAssist, orbitGuide: State.orbitGuide
+          },
+          bodies: State.bodies.map(b=>({ id:b.id,x:b.x,y:b.y,vx:b.vx,vy:b.vy,mass:b.mass,comp:b.comp }))
+        };
+        localStorage.setItem(CONFIG.saveKey, JSON.stringify(payload));
+        flashHUD('Saved ✓');
+      }
+
+      function loadFromLocalStorage(){
+        const raw = localStorage.getItem(CONFIG.saveKey);
+        if (!raw) { flashHUD('No save found'); return; }
+        try{
+          const data = JSON.parse(raw);
+          CONFIG.G = data.config?.G ?? CONFIG.G;
+          CONFIG.softening = data.config?.softening ?? CONFIG.softening;
+          CONFIG.timeScale = data.config?.timeScale ?? CONFIG.timeScale;
+          CONFIG.starMassThreshold = data.config?.starMassThreshold ?? CONFIG.starMassThreshold;
+          CONFIG.planetMassThreshold = data.config?.planetMassThreshold ?? CONFIG.planetMassThreshold;
+          CONFIG.igniteGasFraction = data.config?.igniteGasFraction ?? CONFIG.igniteGasFraction;
+          CONFIG.edgeBehavior = data.config?.edgeBehavior ?? CONFIG.edgeBehavior;
+          CONFIG.brushSize = data.config?.brushSize ?? CONFIG.brushSize;
+          CONFIG.massPerDot = data.config?.massPerDot ?? CONFIG.massPerDot;
+          CONFIG.spawnRate = data.config?.spawnRate ?? CONFIG.spawnRate;
+          CONFIG.speedBoost = data.config?.speedBoost ?? CONFIG.speedBoost;
+          State.trails = data.config?.trails ?? State.trails;
+          State.vectors = data.config?.vectors ?? State.vectors;
+          State.orbitAssist = data.config?.orbitAssist ?? State.orbitAssist;
+          State.orbitGuide = data.config?.orbitGuide ?? State.orbitGuide;
+
+          State.bodies = data.bodies.map(b=>createBody(b.x, b.y, b.mass, b.comp, b.vx, b.vy));
+          syncControls(); updateCapInfo();
+          flashHUD('Loaded ✓');
+        } catch(e){ console.error(e); flashHUD('Load failed'); }
+      }
+
+      function syncControls(){
+        const set = (id,v)=>{ const el=document.getElementById(id); el.value=String(v); el.dispatchEvent(new Event('input')); };
+        set('gravity', CONFIG.G); set('timeScale', CONFIG.timeScale); set('softening', CONFIG.softening);
+        set('starThreshold', CONFIG.starMassThreshold); set('planetThreshold', CONFIG.planetMassThreshold); set('igniteFrac', CONFIG.igniteGasFraction);
+        set('brushSize', CONFIG.brushSize); set('massPerDot', CONFIG.massPerDot); set('spawnRate', CONFIG.spawnRate);
+        document.getElementById('trails').value = State.trails;
+        document.getElementById('vectors').value = State.vectors;
+        document.getElementById('edge').value = CONFIG.edgeBehavior;
+        document.getElementById('orbitAssist').checked = State.orbitAssist;
+        document.getElementById('orbitGuide').checked = State.orbitGuide;
+        const sb = document.getElementById('speedBoost'); sb.value = String(CONFIG.speedBoost); sb.dispatchEvent(new Event('input'));
+      }
+
+      // ===============================
+      // Seeds
+      // ===============================
+      // Purpose: Demo system and random belt around largest star.
+      function clearBodies(){ State.bodies.length=0; updateCapInfo(); flashHUD('Cleared'); }
+
+      function addDefaultStar(){
+        const cx = State.w/2, cy = State.h/2;
+        const star = createBody(cx, cy, CONFIG.starMassThreshold*1.1, {gas:0.9,rock:0.08,ice:0.02}, 0, 0);
+        State.bodies.push(star);
+      }
+
+      function largestStar(){ let s=null; for (const b of State.bodies) if (b.type==='star' && (!s || b.mass>s.mass)) s=b; return s; }
+
+      function seedDemo(){
+        clearBodies();
+        const cx = State.w/2, cy = State.h/2;
+        const star = createBody(cx, cy, CONFIG.starMassThreshold*1.2, {gas:0.85,rock:0.1,ice:0.05}, 0, 0);
+        State.bodies.push(star);
+        const mkPlanet=(r, m, comp)=>{
+          const a=Math.random()*Math.PI*2; const x=cx+r*Math.cos(a), y=cy+r*Math.sin(a);
+          // Circular speed around central star
+          const v = circularSpeed(CONFIG.G, star.mass, r) * (0.95 + Math.random()*0.1);
+          const tx = -Math.sin(a), ty = Math.cos(a);
+          const vx = tx * v, vy = ty * v;
+          State.bodies.push(createBody(x,y,m,comp,vx,vy));
+        };
+        mkPlanet(160, CONFIG.planetMassThreshold*1.2, {gas:0.1,rock:0.85,ice:0.05});
+        mkPlanet(280, CONFIG.planetMassThreshold*3.0, {gas:0.7,rock:0.25,ice:0.05});
+        mkPlanet(380, CONFIG.planetMassThreshold*2.4, {gas:0.25,rock:0.2,ice:0.55});
+        for (let i=0;i<90;i++){
+          const r=460 + Math.random()*50; const a=Math.random()*Math.PI*2; const x=cx+r*Math.cos(a), y=cy+r*Math.sin(a);
+          const v = circularSpeed(CONFIG.G, star.mass, r) * (0.9 + Math.random()*0.2);
+          const vx=-Math.sin(a)*v, vy=Math.cos(a)*v;
+          const m=2+Math.random()*3; const comp = Math.random()<0.6 ? {gas:0.1,rock:0.7,ice:0.2} : {gas:0.2,rock:0.2,ice:0.6};
+          State.bodies.push(createBody(x,y,m,comp,vx,vy));
+        }
+        updateCapInfo(); flashHUD('Demo seeded');
+      }
+
+      function seedRandomBelt(){
+        let s = largestStar(); if (!s) { addDefaultStar(); s = largestStar(); }
+        if (!s) return;
+        const cx=s.x, cy=s.y; const base=260+Math.random()*160; const spread=60; const count=120+Math.floor(Math.random()*120);
+        for (let i=0;i<count && State.bodies.length<CONFIG.maxBodies;i++){
+          const r=base + (Math.random()-0.5)*spread; const ang=Math.random()*Math.PI*2;
+          const x=cx+r*Math.cos(ang), y=cy+r*Math.sin(ang);
+          const vc = circularSpeed(CONFIG.G, s.mass, r) * (0.9 + Math.random()*0.2);
+          const dir = Math.random() < 0.92 ? 1 : -1;
+          const vx=-Math.sin(ang)*vc*dir, vy=Math.cos(ang)*vc*dir;
+          const m=1+Math.random()*3; const mix=Math.random();
+          const comp = mix<0.4?{gas:0.1,rock:0.7,ice:0.2}: mix<0.8?{gas:0.2,rock:0.2,ice:0.6}:{gas:0.6,rock:0.3,ice:0.1};
+          State.bodies.push(createBody(x,y,m,comp,vx,vy));
+        }
+        updateCapInfo(); flashHUD('Belt added');
+      }
+
+      // Creates a stable, randomized solar system with near-circular orbits,
+      // varied planet types, occasional moons, and a debris belt.
+      function seedPresetSystem(){
+        clearBodies();
+        const cx = State.w/2, cy = State.h/2;
+        // Central star: heavier to keep barycenter near center
+        const starMass = CONFIG.starMassThreshold * (1.5 + Math.random()*0.4);
+        const star = createBody(cx, cy, starMass, {gas:0.92,rock:0.06,ice:0.02}, 0, 0);
+        State.bodies.push(star);
+
+        // Planets: 5–8 spaced roughly geometrically from 140 px outward
+        const nPlanets = 5 + Math.floor(Math.random()*4);
+        const baseR = 140 + Math.random()*30;
+        const spacing = 1.35 + Math.random()*0.25; // geometric spacing
+        let r = baseR;
+        const planets = [];
+        for (let i=0; i<nPlanets && State.bodies.length < CONFIG.maxBodies; i++) {
+          const a = Math.random()*Math.PI*2;
+          const x = cx + r*Math.cos(a), y = cy + r*Math.sin(a);
+          // Composition + mass by zone
+          let comp, mass;
+          if (r < baseR*1.8) {
+            // Inner rocky
+            comp = {gas:0.08, rock:0.86, ice:0.06};
+            mass = CONFIG.planetMassThreshold * (0.6 + Math.random()*1.0);
+          } else if (r < baseR*3.0) {
+            // Transition / super-earth / mini-neptune
+            const t = Math.random();
+            if (t < 0.5) { comp = {gas:0.15, rock:0.7, ice:0.15}; }
+            else { comp = {gas:0.5, rock:0.25, ice:0.25}; }
+            mass = CONFIG.planetMassThreshold * (1.2 + Math.random()*2.0);
+          } else {
+            // Outer giants (gas or ice)
+            if (Math.random() < 0.6) comp = {gas:0.75, rock:0.15, ice:0.10};
+            else comp = {gas:0.25, rock:0.15, ice:0.60};
+            mass = CONFIG.planetMassThreshold * (2.0 + Math.random()*4.0);
+          }
+          // Near-circular orbital speed with slight eccentricity/jitter
+          const vCirc = circularSpeed(CONFIG.G, star.mass, r);
+          const v = vCirc * (0.97 + Math.random()*0.06);
+          const tx = -Math.sin(a), ty = Math.cos(a);
+          const jitter = 0.4;
+          const vx = tx * v + (Math.random()-0.5)*jitter;
+          const vy = ty * v + (Math.random()-0.5)*jitter;
+          const planet = createBody(x, y, mass, comp, vx, vy);
+          State.bodies.push(planet);
+          planets.push({body: planet, r});
+          r *= spacing * (1.05 + Math.random()*0.05);
+        }
+
+        // Optional moons for the 1–2 most massive outer planets
+        const heavy = planets
+          .filter(p => p.r > baseR*2.2)
+          .sort((a,b)=>b.body.mass - a.body.mass)
+          .slice(0, 2);
+        for (const host of heavy) {
+          const moons = 1 + Math.floor(Math.random()*2);
+          for (let k=0; k<moons && State.bodies.length < CONFIG.maxBodies; k++) {
+            const pr = host.body.radius * (5 + Math.random()*6); // orbital radius around planet
+            const ang = Math.random()*Math.PI*2;
+            const mx = host.body.x + pr*Math.cos(ang);
+            const my = host.body.y + pr*Math.sin(ang);
+            const vm = circularSpeed(CONFIG.G, host.body.mass, pr) * (0.95 + Math.random()*0.1);
+            const tx = -Math.sin(ang), ty = Math.cos(ang);
+            const mmass = Math.max(1.0, host.body.mass * (0.02 + Math.random()*0.04));
+            const mcomp = {gas:0.05, rock:0.8, ice:0.15};
+            const mvx = host.body.vx + tx*vm;
+            const mvy = host.body.vy + ty*vm;
+            State.bodies.push(createBody(mx, my, mmass, mcomp, mvx, mvy));
+          }
+        }
+
+        // Debris belt beyond last planet
+        const lastR = r * 0.9;
+        const beltCount = 100 + Math.floor(Math.random()*120);
+        for (let i=0;i<beltCount && State.bodies.length < CONFIG.maxBodies;i++){
+          const rr = lastR + 40 + Math.random()*80; const ang=Math.random()*Math.PI*2;
+          const x = cx + rr*Math.cos(ang), y = cy + rr*Math.sin(ang);
+          const vc = circularSpeed(CONFIG.G, star.mass, rr) * (0.9 + Math.random()*0.2);
+          const dir = Math.random()<0.96?1:-1; const vx=-Math.sin(ang)*vc*dir, vy=Math.cos(ang)*vc*dir;
+          const m = 0.8 + Math.random()*2.2;
+          const t = Math.random();
+          const comp = t<0.5? {gas:0.05,rock:0.75,ice:0.20} : {gas:0.15,rock:0.25,ice:0.60};
+          State.bodies.push(createBody(x,y,m,comp,vx,vy));
+        }
+
+        updateCapInfo(); flashHUD('Preset system seeded');
+      }
+
+      // ===============================
+      // Main Loop
+      // ===============================
+      // Purpose: Advance physics and render each frame.
+      function frame(nowMs){
+        const now = nowMs/1000; let dtReal = now - State.lastTime; State.lastTime = now;
+        dtReal = Math.min(CONFIG.maxDt, Math.max(0, dtReal));
+        // Spawn painting based on real time
+        paintStep(dtReal);
+        // Fixed-step physics for smoothness
+        const step = 1 / CONFIG.physicsHz;
+        if (!State.paused) {
+          State.accum += dtReal;
+          let steps = 0, maxSteps = 10;
+          while (State.accum >= step && steps < maxSteps) {
+            integrate(State.bodies, step);
+            handleEdges();
+            resolveCollisions();
+            steps++;
+            State.accum -= step;
+          }
+          // Avoid spiral of death: drop extra time if too slow
+          if (steps === maxSteps) State.accum = 0;
+        }
+        // Interpolation alpha for ultra-smooth rendering
+        State.interpAlpha = clamp(State.accum / (1/CONFIG.physicsHz), 0, 1);
+
+        // Trails sampling (once per frame is fine)
+        const maxLen = CONFIG.trailLength[State.trails] || 0;
+        if (maxLen>0) {
+          for (const b of State.bodies) { b.trail.push({x:b.x, y:b.y}); if (b.trail.length>maxLen) b.trail.shift(); }
+        } else { for (const b of State.bodies) b.trail.length = 0; }
+
+        // Rendering
+        const ctx = State.ctx; drawTrailsFade(ctx); if (State.trails==='off') drawBackground(ctx);
+        drawBodies(ctx); drawVectors(ctx); drawOrbitGuide(ctx); drawHUD();
+
+        // Hover picking for tooltip
+        pickHover(); drawTooltip();
+
+        // FPS
+        fpsTick(dtReal);
+        // Track last mouse pos for throwing
+        State.mouse.lastX = State.mouse.x; State.mouse.lastY = State.mouse.y;
+        requestAnimationFrame(frame);
+      }
+
+      function fpsTick(dt){ State.fpsAccum += dt; State.fpsFrames++; if (State.fpsAccum >= 0.4){ State.fps = State.fpsFrames/State.fpsAccum; State.fpsAccum=0; State.fpsFrames=0; } }
+
+      // Finds nearest body to mouse within pick radius.
+      function pickHover(){
+        const px = State.mouse.x, py = State.mouse.y; const pr = CONFIG.pickRadius * State.dpr; let best=null, bestD2=pr*pr;
+        for (const b of State.bodies){ const dx=b.x-px, dy=b.y-py; const d2=dx*dx+dy*dy; if (d2<bestD2){ best=b; bestD2=d2; } }
+        State.hoverId = best? best.id : null;
+      }
+
+      function flashHUD(text){ const hud=document.getElementById('hud'); const old=hud.textContent; hud.textContent = text + ' • ' + old; setTimeout(()=>drawHUD(), 800); }
+
+      // ===============================
+      // Boot
+      // ===============================
+      initCanvas(); bindUI(); initInput(); drawBackground(State.ctx); drawHUD();
+      // Initialize accelerations once for proper first half-kick
+      computeAccelerations(State.bodies);
+      requestAnimationFrame(frame);
+    </script>
+  </body>
+</html>
