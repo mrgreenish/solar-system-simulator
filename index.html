@@ -156,7 +156,7 @@ Planning Checklist
     .rock { background: #caa36d; box-shadow: 0 0 8px rgba(202,163,109,0.5); }
     .ice { background: #9fefff; box-shadow: 0 0 8px rgba(159,239,255,0.6); }
     .eraser { background: #151515; box-shadow: inset 0 0 0 2px #555; }
-    canvas { display: block; width: 100%; height: 100%; background: #05060a; }
+    canvas { display: block; width: 100%; height: 100%; background: #05060a; image-rendering: pixelated; }
     #hud { position: absolute; top: 8px; right: 8px; background: rgba(10,12,20,0.5); border: 1px solid var(--outline); border-radius: 8px; padding: 6px 8px; font-size: 12px; color: #d6dee9; pointer-events: none; backdrop-filter: blur(4px); }
     #tooltip { position: absolute; pointer-events: none; z-index: 2; background: rgba(20,22,35,0.88); border: 1px solid var(--outline); border-radius: 6px; padding: 6px 8px; font-size: 12px; color: #e9f1ff; transform: translate(12px, 12px); min-width: 160px; max-width: 260px; display: none; }
     .kbd { display: inline-block; padding: 1px 5px; border: 0; border-radius: 0; background: #0d1020; font-size: 10px; color: var(--crt-neon); box-shadow: inset 0 0 0 2px var(--crt-border), inset 0 0 0 4px #0a0f2a, 0 0 0 1px #000; text-transform: uppercase; letter-spacing: 0.4px; }
@@ -325,6 +325,10 @@ Planning Checklist
         minDrawRadius: 1.2,
         backgroundStars: 220,
 
+        // Pixel art style
+        pixelArt: true,
+        pixelSize: 3, // render chunky pixels (2-5 works nicely)
+
         // Body limits & collisions
         maxBodies: 800,
         gridSize: 48,
@@ -370,6 +374,9 @@ Planning Checklist
         hash: new Map(),
         accum: 0,
         interpAlpha: 0,
+        // Pixelation buffer
+        pxCanvas: null,
+        pxCtx: null,
       };
 
       // ===============================
@@ -450,12 +457,18 @@ Planning Checklist
       function initCanvas() {
         State.canvas = document.getElementById('canvas');
         State.ctx = State.canvas.getContext('2d');
+        State.ctx.imageSmoothingEnabled = false;
         resizeCanvas();
         window.addEventListener('resize', resizeCanvas);
         // Background stars
         State.bgStars = Array.from({length: CONFIG.backgroundStars}, () => ({
           x: Math.random(), y: Math.random(), r: Math.random()*1.2+0.3, a: Math.random()*0.5+0.2
         }));
+
+        // Offscreen low-res canvas for pixelation pass
+        State.pxCanvas = document.createElement('canvas');
+        State.pxCtx = State.pxCanvas.getContext('2d');
+        if (State.pxCtx) State.pxCtx.imageSmoothingEnabled = false;
       }
 
       function resizeCanvas() {
@@ -466,6 +479,12 @@ Planning Checklist
         State.dpr = dpr;
         State.canvas.width = State.w;
         State.canvas.height = State.h;
+        // Resize pixel buffer
+        const ps = Math.max(1, Math.floor(CONFIG.pixelSize || 1));
+        if (State.pxCanvas) {
+          State.pxCanvas.width = Math.max(1, Math.floor(State.w / ps));
+          State.pxCanvas.height = Math.max(1, Math.floor(State.h / ps));
+        }
       }
 
       // ===============================
@@ -792,13 +811,21 @@ Planning Checklist
         ctx.save();
         ctx.fillStyle = '#05060a';
         ctx.fillRect(0,0,w,h);
+        // Pixel stars: tiny plus/square sprites
+        ctx.globalAlpha = 0.9;
         for (const s of bgStars) {
-          const x = s.x * w, y = s.y * h;
-          const grad = ctx.createRadialGradient(x, y, 0, x, y, s.r * State.dpr * 2.0);
-          grad.addColorStop(0, 'rgba(220,235,255,0.9)');
-          grad.addColorStop(1, 'rgba(220,235,255,0)');
-          ctx.fillStyle = grad; ctx.globalAlpha = s.a;
-          ctx.beginPath(); ctx.arc(x, y, s.r * State.dpr * 2.0, 0, Math.PI*2); ctx.fill();
+          const x = Math.round(s.x * w);
+          const y = Math.round(s.y * h);
+          const bright = Math.random() < 0.15;
+          ctx.fillStyle = bright ? '#bfe1ff' : '#89a7d9';
+          // center pixel
+          ctx.fillRect(x, y, 1, 1);
+          if (bright) { // add tiny cross
+            ctx.fillRect(x-1, y, 1, 1);
+            ctx.fillRect(x+1, y, 1, 1);
+            ctx.fillRect(x, y-1, 1, 1);
+            ctx.fillRect(x, y+1, 1, 1);
+          }
         }
         ctx.restore(); ctx.globalAlpha = 1.0;
       }
@@ -826,73 +853,58 @@ Planning Checklist
           const x = b.x + b.vx * step * alpha;
           const y = b.y + b.vy * step * alpha;
           const r = Math.max(1, b.radius);
-          if (b.type === 'star') drawStarRealistic(ctx, b, x, y, r);
-          else drawPlanetRealistic(ctx, b, x, y, r);
+          if (b.type === 'star') drawStarPixel(ctx, b, x, y, r);
+          else drawPlanetPixel(ctx, b, x, y, r);
         }
       }
-      // Draw a physically-inspired star: limb-darkened disk + soft corona.
-      function drawStarRealistic(ctx, b, x, y, r){
-        const col = starColor(b.mass);
-        // Limb darkening: bright center -> dim edge
-        const photosphere = ctx.createRadialGradient(x, y, 0, x, y, r);
-        photosphere.addColorStop(0.0, withAlpha(col, 1.0));
-        photosphere.addColorStop(0.6, withAlpha(col, 0.9));
-        photosphere.addColorStop(1.0, withAlpha(col, 0.6));
-        ctx.fillStyle = photosphere; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
-        // Corona
-        const glowR = Math.min(160, r*4.0);
-        const corona = ctx.createRadialGradient(x, y, r*0.8, x, y, glowR);
-        corona.addColorStop(0.0, withAlpha(col, 0.35));
-        corona.addColorStop(1.0, 'rgba(255,255,255,0.01)');
-        ctx.fillStyle = corona; ctx.beginPath(); ctx.arc(x, y, glowR, 0, Math.PI*2); ctx.fill();
-      }
-
-      // Draw planets with light from nearest star: day-night shading, subtle details, rings + shadows.
-      function drawPlanetRealistic(ctx, b, x, y, r){
-        const star = nearestStarTo(b);
-        const palette = planetPalette(b);
-        // No star: simple disk
-        if (!star){
-          const g = ctx.createRadialGradient(x - r*0.4, y - r*0.4, r*0.2, x, y, r);
-          g.addColorStop(0, rgbStr(palette.light)); g.addColorStop(1, rgbStr(palette.dark));
-          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
-          return;
-        }
-        // Light direction from star to planet
-        let lx = star.x - b.x, ly = star.y - b.y; const l = Math.hypot(lx, ly) || 1; lx/=l; ly/=l;
-        // Create a linear gradient along light vector across the disk
-        const gx = x - lx*r, gy = y - ly*r, hx = x + lx*r, hy = y + ly*r;
-        const grad = ctx.createLinearGradient(gx, gy, hx, hy);
-        grad.addColorStop(0.0, 'rgba(0,0,0,0.85)');               // deep night
-        grad.addColorStop(0.35, rgbStr(palette.dark));            // terminator
-        grad.addColorStop(0.65, rgbStr(palette.base));            // day
-        grad.addColorStop(1.0, rgbStr(palette.light));            // bright limb
+      // Pixel-art star: solid disk + tiny cross flare
+      function drawStarPixel(ctx, b, x, y, r){
+        const col = '#ffd166';
+        const px = Math.round(x), py = Math.round(y);
+        const rr = Math.max(2, Math.round(r));
         ctx.save();
-        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.clip();
-        // Fill disk with lighting gradient
-        ctx.fillStyle = grad; ctx.fillRect(x-r-2, y-r-2, (r*2)+4, (r*2)+4);
-
-        // Subtle composition-driven detail
-        if (r > 6) {
-          const dom = dominantComp(b.comp);
-          if (dom==='gas') paintGasBands(ctx, x, y, r, palette, b.id);
-          else if (dom==='ice') paintIcyHighlights(ctx, x, y, r, palette, lx, ly, b.id);
-          else paintRockAlbedo(ctx, x, y, r, palette, b.id);
-        }
-
-        // Rings if giant composition
-        if ((b.comp.gas>=0.55 || b.comp.ice>=0.55) && r>6) {
-          drawRingsRealistic(ctx, x, y, r, lx, ly);
-        }
+        ctx.fillStyle = col; ctx.strokeStyle = '#000';
+        ctx.beginPath(); ctx.arc(px, py, rr, 0, Math.PI*2); ctx.fill();
+        ctx.lineWidth = 1; ctx.stroke();
+        // Cross flare
+        ctx.fillStyle = '#fff7c2';
+        ctx.fillRect(px-rr-1, py, rr*2+2, 1);
+        ctx.fillRect(px, py-rr-1, 1, rr*2+2);
         ctx.restore();
+      }
 
-        // Atmospheric rim scattering (opposite star)
-        if (r > 4) {
-          const rimCol = palette.atm; const rimAlpha = (b.comp.gas>=0.3 || b.comp.ice>=0.3) ? 0.25 : 0.12;
-          ctx.save(); ctx.globalAlpha = rimAlpha; ctx.strokeStyle = rgbStr(rimCol); ctx.lineWidth = Math.max(1, r*0.08);
-          // Rim more intense on far limb: offset center slightly toward star
-          ctx.beginPath(); ctx.arc(x - lx*r*0.15, y - ly*r*0.15, r + ctx.lineWidth*0.4, 0, Math.PI*2); ctx.stroke(); ctx.restore();
+      // Pixel-art planet: flat fill + simple ornamentation by composition
+      function drawPlanetPixel(ctx, b, x, y, r){
+        const px = Math.round(x), py = Math.round(y);
+        const rr = Math.max(2, Math.round(r));
+        // Palette by dominant composition
+        let fill = '#caa36d'; // rock
+        if (b.comp.gas >= b.comp.ice && b.comp.gas >= b.comp.rock) fill = '#7ec8ff';
+        else if (b.comp.ice >= b.comp.gas && b.comp.ice >= b.comp.rock) fill = '#bfefff';
+        ctx.save();
+        ctx.fillStyle = fill; ctx.strokeStyle = '#000';
+        ctx.beginPath(); ctx.arc(px, py, rr, 0, Math.PI*2); ctx.fill();
+        ctx.lineWidth = 1; ctx.stroke();
+        // Minimal banding/texture
+        if (rr > 5){
+          ctx.globalAlpha = 0.35; ctx.strokeStyle = '#00000040';
+          // two parallel lines to evoke gas/rock striations
+          ctx.beginPath(); ctx.moveTo(px-rr*0.8, py-rr*0.3); ctx.lineTo(px+rr*0.8, py-rr*0.3); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(px-rr*0.7, py+rr*0.25); ctx.lineTo(px+rr*0.7, py+rr*0.25); ctx.stroke();
+          ctx.globalAlpha = 1.0;
         }
+        // Simple rings for giants
+        if ((b.comp.gas>=0.55 || b.comp.ice>=0.55) && rr>6){ drawRingsPixel(ctx, px, py, rr); }
+        ctx.restore();
+      }
+
+      function drawRingsPixel(ctx, x, y, r){
+        ctx.save();
+        ctx.strokeStyle = '#e6dcc4'; ctx.globalAlpha = 0.6; ctx.lineWidth = 1;
+        // Approximate tilted ellipse with two thin strokes
+        ctx.beginPath(); ctx.ellipse(x, y, r*2.0, r*0.9, 0.3, 0, Math.PI*2); ctx.stroke();
+        ctx.beginPath(); ctx.ellipse(x, y, r*1.5, r*0.7, 0.3, 0, Math.PI*2); ctx.stroke();
+        ctx.restore();
       }
 
       // Subtle banding for gas giants using semi-transparent latitudinal sweeps.
@@ -1089,6 +1101,25 @@ Planning Checklist
           State.paused ? 'Paused' : 'Running'
         ].join('  |  ');
         hud.textContent = t;
+      }
+
+      // Apply pixelation pass: downscale then upscale with nearest-neighbor
+      function applyPixelation() {
+        if (!CONFIG.pixelArt || !State.pxCanvas || !State.pxCtx) return;
+        const ps = Math.max(1, Math.floor(CONFIG.pixelSize || 1));
+        const pw = Math.max(1, Math.floor(State.w / ps));
+        const ph = Math.max(1, Math.floor(State.h / ps));
+        if (State.pxCanvas.width !== pw || State.pxCanvas.height !== ph) {
+          State.pxCanvas.width = pw; State.pxCanvas.height = ph;
+        }
+        // Downscale current frame into px canvas
+        State.pxCtx.imageSmoothingEnabled = false;
+        State.pxCtx.clearRect(0,0,pw,ph);
+        State.pxCtx.drawImage(State.canvas, 0, 0, pw, ph);
+        // Blit back up with nearest-neighbor
+        State.ctx.imageSmoothingEnabled = false;
+        State.ctx.clearRect(0,0,State.w,State.h);
+        State.ctx.drawImage(State.pxCanvas, 0, 0, State.w, State.h);
       }
 
       function drawTooltip() {
@@ -1366,6 +1397,7 @@ Planning Checklist
         // Rendering
         const ctx = State.ctx; drawTrailsFade(ctx); if (State.trails==='off') drawBackground(ctx);
         drawBodies(ctx); drawVectors(ctx); drawOrbitGuide(ctx); drawHUD();
+        applyPixelation();
 
         // Hover picking for tooltip
         pickHover(); drawTooltip();
