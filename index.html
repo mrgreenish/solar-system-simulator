@@ -337,13 +337,15 @@ Planning Checklist
       // Purpose: Centralize all tweakable constants and defaults.
       const CONFIG = {
         // Physics
-        G: 0.28,                 // Gravitational constant
-        softening: 18,           // Softening (pixels)
+        // Gravitational constant (computed for Solar System seeding)
+        // In general sandbox mode, this is user-tweakable.
+        G: 0.28,
+        softening: 18,           // Softening (pixels) (overridden in Solar System for accuracy)
         timeScale: 1.0,          // Global time multiplier
         dtTarget: 1/60,          // Target timestep (s)
         maxDt: 1/20,             // Clamp huge frame gaps
         physicsHz: 180,          // Fixed physics rate for smoothness
-        gravityCutoff: 1200,     // Ignore gravity beyond this (perf), px
+        gravityCutoff: 1e9,      // Large cutoff so full-system gravity remains accurate
 
         // Densities (relative units)
         density: { gas: 0.7, rock: 3.2, ice: 1.2 },
@@ -364,6 +366,8 @@ Planning Checklist
         speedBoost: 1.0,         // Additional speed multiplier from Speed slider
         minDrawRadius: 1.2,
         backgroundStars: 220,
+        // Spatial scale
+        pxPerAU: null,          // computed when seeding Solar System
 
         // Pixel art style
         pixelArt: false, // disable pixelation for sharper rendering
@@ -1130,7 +1134,9 @@ Planning Checklist
         // Label
         ctx.fillStyle = 'rgba(200,220,255,0.9)';
         ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, Arial';
-        ctx.fillText(`v_circ ${v.toFixed(2)} px/s`, x2 + 6, y2 + 2);
+        const pxPerAU = CONFIG.pxPerAU || 1;
+        const vAU = v / pxPerAU;
+        ctx.fillText(`v_circ ${vAU.toFixed(3)} AU/yr`, x2 + 6, y2 + 2);
         ctx.restore();
       }
 
@@ -1157,6 +1163,26 @@ Planning Checklist
         hud.textContent = t;
       }
 
+      // Draw labels for named bodies (planets, major moons)
+      function drawLabels(ctx){
+        ctx.save();
+        ctx.font = '11px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+        ctx.textBaseline = 'top';
+        for (const b of State.bodies){
+          if (!b.name) continue;
+          const step = 1/CONFIG.physicsHz;
+          const alpha = State.interpAlpha;
+          const x = b.x + b.vx * step * alpha;
+          const y = b.y + b.vy * step * alpha;
+          const padX = 8, padY = -4;
+          const label = b.name;
+          // shadow for readability
+          ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillText(label, x + padX + 1, y + padY + 1);
+          ctx.fillStyle = 'rgba(230,240,255,0.95)'; ctx.fillText(label, x + padX, y + padY);
+        }
+        ctx.restore();
+      }
+
       // Apply pixelation pass: downscale then upscale with nearest-neighbor
       function applyPixelation() {
         if (!CONFIG.pixelArt || !State.pxCanvas || !State.pxCtx) return;
@@ -1174,6 +1200,28 @@ Planning Checklist
         State.ctx.imageSmoothingEnabled = false;
         State.ctx.clearRect(0,0,State.w,State.h);
         State.ctx.drawImage(State.pxCanvas, 0, 0, State.w, State.h);
+      }
+
+      function simYearSeconds(){
+        // Normalize periods to Earth=1 year using current scale
+        const sun = largestStar(); if (!sun || !CONFIG.pxPerAU) return null;
+        const mu = CONFIG.G * sun.mass;
+        const a = CONFIG.pxPerAU; // 1 AU in px
+        return 2*Math.PI * Math.sqrt((a*a*a)/mu);
+      }
+
+      function orbitalParams(body){
+        const sun = largestStar(); if (!sun) return null;
+        const mu = CONFIG.G * sun.mass;
+        const dx = body.x - sun.x, dy = body.y - sun.y; const r = Math.hypot(dx, dy);
+        const v2 = body.vx*body.vx + body.vy*body.vy;
+        const E = 0.5*v2 - mu/r; if (E >= 0) return { bound:false };
+        const a = -mu/(2*E);
+        const T = 2*Math.PI * Math.sqrt((a*a*a)/mu);
+        const yearSec = simYearSeconds();
+        const years = yearSec ? (T / yearSec) : null;
+        const aAU = CONFIG.pxPerAU ? (a / CONFIG.pxPerAU) : null;
+        return { bound:true, a, T, years, aAU };
       }
 
       function drawTooltip() {
@@ -1195,10 +1243,14 @@ Planning Checklist
             if (vCirc > 0) vvCirc = (speed / vCirc).toFixed(2);
           }
         }
-        tip.innerHTML = `<div><strong>${b.type}${subtype}</strong>${star?` • Temp: ${Math.round(star.temp)}K`:''}</div>
+        const orb = orbitalParams(b);
+        const name = b.name ? `${b.name} — ` : '';
+        const aStr = (orb && orb.aAU)? ` • a ≈ ${orb.aAU.toFixed(2)} AU` : '';
+        const Tstr = (orb && orb.years!=null)? ` • P ≈ ${orb.years.toFixed(2)} yr` : '';
+        tip.innerHTML = `<div><strong>${name}${b.type}${subtype}</strong>${star?` • Temp: ${Math.round(star.temp)}K`:''}${aStr}${Tstr}</div>
           <div>Mass: ${b.mass.toFixed(1)}</div>
           <div>Radius: ${b.radius.toFixed(1)} px</div>
-          <div>Velocity: ${speed.toFixed(2)} px/s</div>
+          <div>Velocity: ${(speed/(CONFIG.pxPerAU||1)).toFixed(3)} AU/yr</div>
           <div>v/v_circ: ${vvCirc}</div>
           <div>Comp: gas ${gasPct}%, rock ${rockPct}%, ice ${icePct}%</div>`;
         const rect = State.canvas.getBoundingClientRect();
@@ -1326,42 +1378,125 @@ Planning Checklist
         updateCapInfo(); flashHUD('Belt added');
       }
 
-      // Real Solar System preset with approximate masses and orbital radii.
+      // Real Solar System preset with approximate masses, radii (AU), and eccentricities.
       function seedSolarSystem(){
         clearBodies();
         const cx = State.w/2, cy = State.h/2;
-        // Visual mass scale: choose Earth mass unit so planets are visible
-        const mEarth = 6.0; // arbitrary mass unit for Earth
-        const M_sun = mEarth * 333000; // Sun mass
-        const pxPerAU = Math.min(State.w, State.h) * 0.42 / 30.07; // Neptune ~30.07 AU near 42% of min dimension
+        // Unit system: AU (distance), years (time), Msun (mass)
+        // Choose pixel scale so Neptune (~30 AU) fits nicely on screen.
+        const pxPerAU = Math.min(State.w, State.h) * 0.42 / 30.07; // px per AU
+        CONFIG.pxPerAU = pxPerAU;
+        // Set G in pixel/year^2 units: G_ast = 4*pi^2 AU^3/(yr^2 Msun)
+        // Convert to pixels: G_px = G_ast * pxPerAU^3
+        const G_ast = 4*Math.PI*Math.PI;
+        CONFIG.G = G_ast * pxPerAU * pxPerAU * pxPerAU;
+        // Small softening relative to AU for numerical stability (does not affect orbits)
+        CONFIG.softening = Math.max(0.001, 0.002 * pxPerAU);
+        // Mass scale: Sun = 1 Msun; Earth = 3.003e-6 Msun
+        const M_sun = 1.0; // Msun
+        const mEarth = 3.003e-6; // Msun
 
         // Create Sun (gas heavy)
         const Sun = createBody(cx, cy, M_sun, {gas:0.98, rock:0.015, ice:0.005}, 0, 0);
         Sun.type = 'star';
+        Sun.name = 'Sun';
         State.bodies.push(Sun);
 
-        // Helper to place a planet on a circular orbit
-        function placePlanet(AU, massEarths, comp, angle, dir=1){
-          const r = AU * pxPerAU;
-          const x = cx + r * Math.cos(angle);
-          const y = cy + r * Math.sin(angle);
-          const v = circularSpeed(CONFIG.G, Sun.mass, r);
-          const tx = -Math.sin(angle) * dir, ty = Math.cos(angle) * dir; // tangential unit
-          const vx = tx * v, vy = ty * v;
+        // Helper to place a planet with eccentricity using vis-viva in 2D plane
+        function placePlanet(AU, e, massEarths, comp, omega, f){
+          const a = AU * pxPerAU; // semi-major axis in px
+          const mu = CONFIG.G * Sun.mass;
+          const r = a * (1 - e*e) / (1 + e*Math.cos(f));
+          // Perifocal frame
+          const x_pf = r * Math.cos(f);
+          const y_pf = r * Math.sin(f);
+          const k = Math.sqrt(mu/a) / Math.sqrt(1 - e*e);
+          const vx_pf = -k * Math.sin(f);
+          const vy_pf =  k * (e + Math.cos(f));
+          // Rotate by argument of periapsis omega
+          const co = Math.cos(omega), so = Math.sin(omega);
+          const x = cx + x_pf*co - y_pf*so;
+          const y = cy + x_pf*so + y_pf*co;
+          const vx = vx_pf*co - vy_pf*so;
+          const vy = vx_pf*so + vy_pf*co;
           const mass = massEarths * mEarth;
-          State.bodies.push(createBody(x, y, mass, comp, vx, vy));
+          const body = createBody(x, y, mass, comp, vx, vy);
+          body.type = 'planet';
+          return body;
         }
 
-        // Orbital radii (AU) and masses (Earth masses)
-        // Data approx: NASA fact sheet (simplified), eccentricities ignored for circular orbits.
-        placePlanet(0.387, 0.0553, {gas:0.02, rock:0.95, ice:0.03}, 0.1);
-        placePlanet(0.723, 0.815,  {gas:0.03, rock:0.94, ice:0.03}, 1.2);
-        placePlanet(1.000, 1.0,   {gas:0.02, rock:0.95, ice:0.03}, 2.1);
-        placePlanet(1.524, 0.107, {gas:0.02, rock:0.9,  ice:0.08}, 3.0);
-        placePlanet(5.203, 317.8, {gas:0.88, rock:0.10, ice:0.02}, 0.7);
-        placePlanet(9.537, 95.2,  {gas:0.85, rock:0.10, ice:0.05}, 2.5);
-        placePlanet(19.191, 14.5, {gas:0.20, rock:0.25, ice:0.55}, 4.1);
-        placePlanet(30.07, 17.1,  {gas:0.20, rock:0.20, ice:0.60}, 5.0);
+        // Orbital elements: AU, eccentricity e, mass (Earths), composition, omega (rad), f (true anomaly rad)
+        const planets = [
+          ['Mercury', 0.387, 0.2056, 0.0553, {gas:0.02, rock:0.95, ice:0.03}, 0.4, 0.0],
+          ['Venus',   0.723, 0.0068, 0.815,  {gas:0.03, rock:0.94, ice:0.03}, 1.0, 1.2],
+          ['Earth',   1.000, 0.0167, 1.0,    {gas:0.02, rock:0.95, ice:0.03}, 0.2, 2.1],
+          ['Mars',    1.524, 0.0934, 0.107,  {gas:0.02, rock:0.90, ice:0.08}, 0.8, 3.0],
+          ['Jupiter', 5.203, 0.0489, 317.8,  {gas:0.88, rock:0.10, ice:0.02}, 0.7, 1.8],
+          ['Saturn',  9.537, 0.0565, 95.2,   {gas:0.85, rock:0.10, ice:0.05}, 1.3, 2.5],
+          ['Uranus', 19.191, 0.0472, 14.5,   {gas:0.20, rock:0.25, ice:0.55}, 2.0, 4.1],
+          ['Neptune',30.07,  0.0086, 17.1,   {gas:0.20, rock:0.20, ice:0.60}, 2.6, 5.0],
+        ];
+        const placed = [];
+        for (const [name, aAU, e, mE, comp, omega, f] of planets){
+          const p = placePlanet(aAU, e, mE, comp, omega, f);
+          p.name = name;
+          placed.push(p);
+          State.bodies.push(p);
+        }
+
+        // Moons (selected major ones): distances in AU, circular approx
+        function addMoon(planetName, moonName, aMoonAU, mMoonEarths, comp){
+          const planet = State.bodies.find(b=>b.name===planetName);
+          if (!planet) return;
+          let r = aMoonAU * pxPerAU;
+          // Ensure moons are resolvable on screen (visual scale-up if needed)
+          if (r < 12) r = 12;
+          const ang = Math.random()*Math.PI*2;
+          const x = planet.x + r*Math.cos(ang);
+          const y = planet.y + r*Math.sin(ang);
+          const muP = CONFIG.G * planet.mass;
+          const vrel = Math.sqrt(muP / r);
+          const tx = -Math.sin(ang), ty = Math.cos(ang);
+          const vx = planet.vx + tx * vrel;
+          const vy = planet.vy + ty * vrel;
+          const mass = mMoonEarths * mEarth; // Msun
+          const moon = createBody(x, y, mass, comp, vx, vy);
+          moon.name = moonName; moon.type = 'planet'; // treat visually as planet
+          State.bodies.push(moon);
+        }
+
+        // Earth-Moon
+        addMoon('Earth', 'Moon', 0.00257, 0.0123, {gas:0.0, rock:0.9, ice:0.1});
+        // Galilean moons
+        addMoon('Jupiter', 'Io',       0.00282, 0.015, {gas:0.0, rock:0.7, ice:0.3});
+        addMoon('Jupiter', 'Europa',   0.00449, 0.008, {gas:0.0, rock:0.6, ice:0.4});
+        addMoon('Jupiter', 'Ganymede', 0.00716, 0.025, {gas:0.0, rock:0.5, ice:0.5});
+        addMoon('Jupiter', 'Callisto', 0.01257, 0.018, {gas:0.0, rock:0.4, ice:0.6});
+        // Saturn's Titan
+        addMoon('Saturn', 'Titan', 0.00817, 0.0225, {gas:0.0, rock:0.5, ice:0.5});
+
+        // Asteroid belt (rocky debris)
+        const beltCount = 200;
+        for (let i=0;i<beltCount && State.bodies.length<CONFIG.maxBodies;i++){
+          const aAU = 2.2 + Math.random()*1.0; // 2.2–3.2 AU
+          const e = Math.min(0.25, Math.abs((Math.random()-0.5))*0.4);
+          const f = Math.random()*Math.PI*2;
+          const omega = Math.random()*Math.PI*2;
+          const a = aAU * pxPerAU; const mu = CONFIG.G * Sun.mass;
+          const r = a * (1 - e*e) / (1 + e*Math.cos(f));
+          const x_pf = r*Math.cos(f), y_pf = r*Math.sin(f);
+          const k = Math.sqrt(mu/a) / Math.sqrt(1 - e*e);
+          const vx_pf = -k*Math.sin(f), vy_pf = k*(e+Math.cos(f));
+          const co=Math.cos(omega), so=Math.sin(omega);
+          const x = cx + x_pf*co - y_pf*so;
+          const y = cy + x_pf*so + y_pf*co;
+          const vx = vx_pf*co - vy_pf*so;
+          const vy = vx_pf*so + vy_pf*co;
+          const m = 0.0001 + Math.random()*0.0015; // tiny masses
+          const comp = {gas:0.02, rock:0.9, ice:0.08};
+          const ast = createBody(x, y, m*mEarth, comp, vx, vy);
+          State.bodies.push(ast);
+        }
 
         updateCapInfo(); flashHUD('Solar System seeded');
       }
@@ -1469,7 +1604,7 @@ Planning Checklist
         if (!State.paused) {
           // Accumulate simulation time scaled by time controls
           State.accum += dtReal * getTimeScale();
-          let steps = 0, maxSteps = Math.min(60, Math.max(10, Math.ceil(10 * getTimeScale())));
+          let steps = 0, maxSteps = Math.min(180, Math.max(12, Math.ceil(12 * getTimeScale())));
           while (State.accum >= step && steps < maxSteps) {
             integrate(State.bodies, step);
             handleEdges();
@@ -1499,6 +1634,7 @@ Planning Checklist
         // Overlays remain crisp
         drawVectors(ctx);
         drawOrbitGuide(ctx);
+        drawLabels(ctx);
         drawHUD();
 
         // Hover picking for tooltip
