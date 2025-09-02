@@ -409,7 +409,7 @@ Planning Checklist
         canvas: null,
         ctx: null,
         w: 0, h: 0, dpr: 1,
-        mouse: { x:0, y:0, down:false, lastX:0, lastY:0, throwing:false },
+        mouse: { x:0, y:0, sx:0, sy:0, down:false, lastX:0, lastY:0, lastSX:0, lastSY:0, throwing:false },
         lastTime: performance.now()/1000,
         spawnAccum: 0,
         bgStars: [],
@@ -484,7 +484,7 @@ Planning Checklist
         byId('togglePause').addEventListener('click', () => {
           State.paused = !State.paused; byId('togglePause').textContent = State.paused ? 'Resume' : 'Pause';
         });
-        byId('centerView').addEventListener('click', () => flashHUD('Centered'));
+        byId('centerView').addEventListener('click', () => { centerView(); flashHUD('Centered'); });
         byId('save').addEventListener('click', saveToLocalStorage);
         byId('load').addEventListener('click', loadFromLocalStorage);
 
@@ -500,6 +500,19 @@ Planning Checklist
         if (closeHelp) closeHelp.addEventListener('click', hideHelp);
         if (modalOverlay) modalOverlay.addEventListener('click', (e)=>{ if (e.target === modalOverlay) hideHelp(); });
         window.addEventListener('keydown', (e)=>{ if (e.key === 'Escape') hideHelp(); });
+      }
+
+      function centerView(){
+        const star = largestStar();
+        const cx = State.w*0.5, cy = State.h*0.5;
+        if (!star){
+          State.view.x = 0; State.view.y = 0; State.view.scale = 1;
+          return;
+        }
+        // Keep current scale, pan to center the star
+        const v = State.view; const s = v.scale;
+        v.x = cx - star.x * s;
+        v.y = cy - star.y * s;
       }
 
       function updateCapInfo() {
@@ -525,6 +538,8 @@ Planning Checklist
         State.pxCanvas = document.createElement('canvas');
         State.pxCtx = State.pxCanvas.getContext('2d');
         if (State.pxCtx) State.pxCtx.imageSmoothingEnabled = false;
+        // Reset view (pan/zoom)
+        State.view = { scale: 1, x: 0, y: 0 };
       }
 
       function resizeCanvas() {
@@ -656,8 +671,23 @@ Planning Checklist
         const c = State.canvas;
         c.addEventListener('mousedown', e => { State.mouse.down = true; updateMouse(e); });
         window.addEventListener('mouseup', () => { State.mouse.down = false; });
-        c.addEventListener('mousemove', e => { const {x,y}=mousePos(e); State.mouse.lastX=State.mouse.x; State.mouse.lastY=State.mouse.y; State.mouse.x=x; State.mouse.y=y; });
+        c.addEventListener('mousemove', e => { updateMouse(e); });
         c.addEventListener('mouseleave', () => { State.mouse.down = false; });
+
+        // Zoom with wheel (zoom around cursor)
+        c.addEventListener('wheel', e => {
+          e.preventDefault();
+          const v = State.view;
+          const old = v.scale;
+          const factor = Math.pow(1.1, -Math.sign(e.deltaY));
+          let next = old * factor;
+          next = Math.max(0.25, Math.min(6, next));
+          const mx = (State.mouse.sx || 0), my = (State.mouse.sy || 0);
+          const wx = (mx - v.x)/old, wy = (my - v.y)/old;
+          v.scale = next;
+          v.x = mx - wx * next;
+          v.y = my - wy * next;
+        }, { passive: false });
 
         window.addEventListener('keydown', e => {
           if (e.code === 'Space') { e.preventDefault(); State.paused = !State.paused; document.getElementById('togglePause').textContent = State.paused ? 'Resume' : 'Pause'; }
@@ -670,7 +700,16 @@ Planning Checklist
       }
 
       function mousePos(e) { const r = State.canvas.getBoundingClientRect(); return { x: (e.clientX - r.left) * State.dpr, y: (e.clientY - r.top) * State.dpr }; }
-      function updateMouse(e) { const p = mousePos(e); State.mouse.x = p.x; State.mouse.y = p.y; }
+      function screenToWorld(sx, sy){ const v=State.view; return { x: (sx - v.x)/v.scale, y: (sy - v.y)/v.scale }; }
+      function worldToScreen(x, y){ const v=State.view; return { sx: x*v.scale + v.x, sy: y*v.scale + v.y }; }
+      function updateMouse(e) {
+        const p = mousePos(e);
+        State.mouse.lastSX = State.mouse.sx; State.mouse.lastSY = State.mouse.sy;
+        State.mouse.sx = p.x; State.mouse.sy = p.y;
+        const w = screenToWorld(p.x, p.y);
+        State.mouse.lastX = State.mouse.x; State.mouse.lastY = State.mouse.y;
+        State.mouse.x = w.x; State.mouse.y = w.y;
+      }
 
       // ===============================
       // Physics (Gravity & Integration)
@@ -810,7 +849,7 @@ Planning Checklist
         const dotsThisFrame = Math.min(50, Math.floor(State.spawnAccum));
         State.spawnAccum -= dotsThisFrame;
         const bx = State.mouse.x, by = State.mouse.y;
-        const brush = CONFIG.brushSize * State.dpr;
+        const brush = (CONFIG.brushSize * State.dpr) / State.view.scale;
         const throwVX = State.mouse.throwing ? (State.mouse.x - State.mouse.lastX) * CONFIG.throwScale : 0;
         const throwVY = State.mouse.throwing ? (State.mouse.y - State.mouse.lastY) * CONFIG.throwScale : 0;
 
@@ -905,6 +944,8 @@ Planning Checklist
       function drawBodies(ctx) {
         const step = 1/CONFIG.physicsHz; // base sim step for interpolation
         const alpha = State.interpAlpha;
+        ctx.save();
+        ctx.setTransform(State.view.scale, 0, 0, State.view.scale, State.view.x, State.view.y);
         for (const b of State.bodies) {
           const x = b.x + b.vx * step * alpha;
           const y = b.y + b.vy * step * alpha;
@@ -912,6 +953,7 @@ Planning Checklist
           if (b.type === 'star') drawStarPixel(ctx, b, x, y, r);
           else drawPlanetPixel(ctx, b, x, y, r);
         }
+        ctx.restore();
       }
       // Pixel-art star: solid disk + tiny cross flare
       function drawStarPixel(ctx, b, x, y, r){
@@ -1102,7 +1144,7 @@ Planning Checklist
 
       function drawVectors(ctx) {
         if (State.vectors==='off') return;
-        ctx.save(); ctx.lineWidth=1; ctx.strokeStyle = State.vectors==='vel' ? '#58e6a9' : '#ffb86b';
+        ctx.save(); ctx.setTransform(State.view.scale, 0, 0, State.view.scale, State.view.x, State.view.y); ctx.lineWidth=1; ctx.strokeStyle = State.vectors==='vel' ? '#58e6a9' : '#ffb86b';
         const scale = State.vectors==='vel' ? CONFIG.vectorScaleVel : CONFIG.vectorScaleAcc;
         const step = 1/CONFIG.physicsHz; // base sim step for interpolation
         const alpha = State.interpAlpha;
@@ -1128,7 +1170,7 @@ Planning Checklist
         const tx = -ry / r, ty = rx / r; // tangential unit vector
         const len = v * CONFIG.orbitGuideScale;
         const x2 = mx + tx * len, y2 = my + ty * len;
-        ctx.save();
+        ctx.save(); ctx.setTransform(State.view.scale, 0, 0, State.view.scale, State.view.x, State.view.y);
         ctx.lineWidth = 1.5; ctx.strokeStyle = '#66b7ff';
         drawArrow(ctx, mx, my, x2, y2);
         // Label
@@ -1165,7 +1207,7 @@ Planning Checklist
 
       // Draw labels for named bodies (planets, major moons)
       function drawLabels(ctx){
-        ctx.save();
+        ctx.save(); ctx.setTransform(State.view.scale, 0, 0, State.view.scale, State.view.x, State.view.y);
         ctx.font = '11px system-ui, -apple-system, Segoe UI, Roboto, Arial';
         ctx.textBaseline = 'top';
         for (const b of State.bodies){
@@ -1254,8 +1296,8 @@ Planning Checklist
           <div>v/v_circ: ${vvCirc}</div>
           <div>Comp: gas ${gasPct}%, rock ${rockPct}%, ice ${icePct}%</div>`;
         const rect = State.canvas.getBoundingClientRect();
-        tip.style.left = `${rect.left/1 + State.mouse.x/State.dpr + 14}px`;
-        tip.style.top = `${rect.top/1 + State.mouse.y/State.dpr + 14}px`;
+        tip.style.left = `${rect.left + (State.mouse.sx/State.dpr) + 14}px`;
+        tip.style.top = `${rect.top + (State.mouse.sy/State.dpr) + 14}px`;
         tip.style.display = 'block';
       }
 
@@ -1651,7 +1693,7 @@ Planning Checklist
 
       // Finds nearest body to mouse within pick radius.
       function pickHover(){
-        const px = State.mouse.x, py = State.mouse.y; const pr = CONFIG.pickRadius * State.dpr; let best=null, bestD2=pr*pr;
+        const px = State.mouse.x, py = State.mouse.y; const pr = (CONFIG.pickRadius * State.dpr) / State.view.scale; let best=null, bestD2=pr*pr;
         for (const b of State.bodies){ const dx=b.x-px, dy=b.y-py; const d2=dx*dx+dy*dy; if (d2<bestD2){ best=b; bestD2=d2; } }
         State.hoverId = best? best.id : null;
       }
