@@ -7,9 +7,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         index: resolve(__dirname, 'index.html'),
-        three: resolve(__dirname, '3d.html'),
       },
     },
   },
 });
-

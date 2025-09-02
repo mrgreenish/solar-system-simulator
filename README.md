@@ -1,4 +1,4 @@
-# Solar System Sandbox
+# Solar System Sandbox (2D)
 
 [![Live Demo](https://img.shields.io/badge/Live-Demo-2ea44f)](https://mrgreenish.github.io/solar-system-simulator/)
 
@@ -29,15 +29,12 @@ Single-file HTML5 solar system sandbox simulation. Paint matter (gas/rock/ice), 
 - Preset System: Stable system with 5–8 planets, occasional moons, debris belt
 
 ## Run Locally
-- 2D: open `index.html` directly.
-- 3D (Three.js):
-  - Quick preview (build + serve): `npm install` then `npm run dev` → open printed URL (e.g., http://localhost:4173)
-  - Live dev server: `npm run dev:live` (hot reload) → open the URL (e.g., http://localhost:5173)
-  - Manual: `npm run build` then `npm run preview`
+- Open `index.html` directly in a browser.
+  - Optional: `npm run build` then `npm run preview` to serve via Vite.
 
 ## GitHub Pages (CI)
 - This repo includes a GitHub Actions workflow to publish the static site.
-- On push to `main`, the workflow builds the Three.js app and deploys `dist/` to Pages (includes 2D + 3D).
+- On push to `main`, the workflow builds and deploys `dist/` to Pages (2D app only).
 - First-time publish may take ~1–2 minutes.
 
 If Pages isn’t enabled, in GitHub: Settings → Pages → Build and deployment → Source: “GitHub Actions”.
